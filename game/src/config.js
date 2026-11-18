@@ -40,6 +40,20 @@ export const VEHICLE_TYPES = {
 export const TRAFFIC_SPEED = 150;
 export const POLICE_SPEED = 520;
 
+// Vehicle damage. Every car carries hit points; the player's ride loses them in
+// hard crashes and ram exchanges, smokes as they fall, and handles worse once
+// they are low. The safehouse crew patches a car back up, a few points at a
+// time, for cash — see REPAIR_* below.
+export const CAR_MAX_HP = 100;
+export const DAMAGE_SMOKE_HP = 70;
+export const DAMAGE_HANDLING_HP = 35;
+
+// Repairs at the safehouse: every tick restores a few hit points and bills a
+// few dollars, until the car is whole or the driver's pockets are empty.
+export const REPAIR_TICK_SECONDS = 0.2;
+export const REPAIR_TICK_HP = 6;
+export const REPAIR_TICK_COST = 3;
+
 // The Sol Plaza safehouse: the hideout the second job delivers to. Standing
 // inside its ring cools the wanted level much faster than lying low elsewhere.
 export const SAFEHOUSE = { x: 1400, y: 1000, radius: 180 };
@@ -50,6 +64,21 @@ export const SAFEHOUSE_COOL_RATE = 3.5;
 // sooner at five stars, when the whole force is committed.
 export const ROADBLOCK_COOLDOWN = 7;
 export const ROADBLOCK_COOLDOWN_HOT = 4;
+
+// The police helicopter: at five stars the Aurora PD puts a bird up. It orbits
+// the player and holds its spotlight on them, and a lit driver cannot cool
+// their wanted level — the eye in the sky never blinks.
+export const HELI_WANTED = 5;
+export const HELI_ORBIT_RADIUS = 135;
+export const HELI_SPOT_RADIUS = 150;
+
+// The street race (job 5): the rival driver Rook pits you against. Quick, but
+// not sports-coupe quick — a clean line in a fast car beats them.
+export const RACE_RIVAL_SPEED = 475;
+
+// Fragile cargo (job 7): every hard crash while the glassware is aboard cracks
+// this much of it. At zero there is nothing left to deliver and the job fails.
+export const CARGO_CRASH_DAMAGE = 12;
 
 // One full turn of the day: golden morning, dusk, blue night and back again.
 export const DAY_CYCLE_SECONDS = 300;

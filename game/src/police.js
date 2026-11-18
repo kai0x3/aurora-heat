@@ -3,12 +3,16 @@
 // Sol Plaza safehouse ring cools them far faster. Cruisers spawn on the roads
 // near the player, chase, and ram — and at four stars and up they stop chasing
 // fair: pairs of cruisers park across the road ahead as a roadblock the player
-// has to ram through, shoot apart or dodge.
+// has to ram through, shoot apart or dodge. At five stars the department stops
+// playing on the ground altogether and puts a helicopter up: it orbits the
+// player with its spotlight pinned to them, and nobody cools their heat while
+// the light is on them.
 
 import {
-  CAR_LENGTH, CAR_WIDTH, POLICE_CAR_HP, POLICE_SPEED, ROADBLOCK_COOLDOWN,
-  ROADBLOCK_COOLDOWN_HOT, SAFEHOUSE, SAFEHOUSE_COOL_RATE, WANTED_DECAY_SECONDS,
-  WANTED_MAX, WANTED_QUIET_SECONDS, WORLD_HEIGHT, WORLD_WIDTH,
+  CAR_LENGTH, CAR_WIDTH, HELI_ORBIT_RADIUS, HELI_SPOT_RADIUS, HELI_WANTED,
+  POLICE_CAR_HP, POLICE_SPEED, ROADBLOCK_COOLDOWN, ROADBLOCK_COOLDOWN_HOT,
+  SAFEHOUSE, SAFEHOUSE_COOL_RATE, WANTED_DECAY_SECONDS, WANTED_MAX,
+  WANTED_QUIET_SECONDS, WORLD_HEIGHT, WORLD_WIDTH,
 } from './config.js';
 import { hitsBuilding, nearestRoadPoint, randomRoadPoint } from './city.js';
 
@@ -36,16 +40,25 @@ export function addWanted(world, n) {
   world.wantedTimer = 0;
 }
 
+/** True while the helicopter's spotlight pool covers the player. */
+export function playerInSpotlight(world) {
+  const heli = world.heli;
+  if (!heli || !heli.active) return false;
+  return Math.hypot(world.player.x - heli.spotX, world.player.y - heli.spotY) <= HELI_SPOT_RADIUS;
+}
+
 /**
  * Let the wanted level decay once the player has been quiet and unseen for a
  * while. The decay is timer-based — one star per WANTED_DECAY_SECONDS of
  * accumulated quiet time — and the safehouse ring accumulates that time
- * SAFEHOUSE_COOL_RATE times faster. A cruiser within 420 px pauses it all.
+ * SAFEHOUSE_COOL_RATE times faster. A cruiser within 420 px pauses it all,
+ * and so does the helicopter's spotlight: under the light you are never unseen.
  */
 export function updateWanted(world, dt) {
   world.timeSinceCrime += dt;
   const policeNear = world.police.some((car) => Math.hypot(car.x - world.player.x, car.y - world.player.y) < 420);
-  if (world.wanted > 0 && world.timeSinceCrime > WANTED_QUIET_SECONDS && !policeNear) {
+  const seen = policeNear || playerInSpotlight(world);
+  if (world.wanted > 0 && world.timeSinceCrime > WANTED_QUIET_SECONDS && !seen) {
     const rate = playerAtSafehouse(world) ? SAFEHOUSE_COOL_RATE : 1;
     world.wantedTimer += dt * rate;
     if (world.wantedTimer >= WANTED_DECAY_SECONDS) {
@@ -244,4 +257,44 @@ export function updatePoliceCar(car, world, dt) {
 /** The flashing light phase for a cruiser's light bar (0 = red, 1 = blue). */
 export function sirenColor(car) {
   return Math.floor(car.sirenPhase * 4) % 2 === 0 ? '#ff2b2b' : '#2b5cff';
+}
+
+/**
+ * The helicopter. It only flies at HELI_WANTED stars and up: it swings in from
+ * off-screen, settles into a slow orbit around the player, and drags its
+ * spotlight pool after them — the pool trails a half-step behind, so a sharp
+ * driver can dance at its edge but never truly leave it. Lose the fifth star
+ * and it banks away and is gone.
+ */
+export function updateHelicopter(world, dt) {
+  const heli = world.heli;
+  const player = world.player;
+  heli.rotor += dt * 42;
+  if (world.wanted >= HELI_WANTED) {
+    if (!heli.active) {
+      heli.active = true;
+      // It arrives from the north-east, high and fast.
+      heli.x = player.x + 700;
+      heli.y = player.y - 700;
+      heli.spotX = heli.x;
+      heli.spotY = heli.y;
+    }
+    heli.orbit += dt * 0.55;
+    const anchorX = player.x + Math.cos(heli.orbit) * HELI_ORBIT_RADIUS;
+    const anchorY = player.y + Math.sin(heli.orbit) * HELI_ORBIT_RADIUS;
+    // The airframe leans toward its anchor; the light leans toward the player.
+    const chase = Math.min(1, dt * 1.9);
+    heli.x += (anchorX - heli.x) * chase;
+    heli.y += (anchorY - heli.y) * chase;
+    const spotChase = Math.min(1, dt * 5.5);
+    heli.spotX += (player.x - heli.spotX) * spotChase;
+    heli.spotY += (player.y - heli.spotY) * spotChase;
+  } else if (heli.active) {
+    // The heat is off: bank away north and fade from the chase.
+    heli.x += 620 * dt;
+    heli.y -= 620 * dt;
+    heli.spotX = heli.x;
+    heli.spotY = heli.y;
+    if (Math.hypot(heli.x - player.x, heli.y - player.y) > 1100) heli.active = false;
+  }
 }

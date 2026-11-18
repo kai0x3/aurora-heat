@@ -1,8 +1,12 @@
 // Synthesized sound, no audio files: every effect is an oscillator or a burst of
 // filtered noise through the Web Audio API, and the music is a small bass loop
-// with a pentatonic lead pluck over it, scheduled ahead of time. A looping band
-// of noise screeches while the player's tyres slide. Nothing starts until the
-// player first interacts — browsers require a user gesture before audio may play.
+// with a pentatonic lead pluck over it, scheduled ahead of time. The engine
+// climbs through stepped gears as the car speeds up; two sirens sing at once —
+// the cruisers on your tail, loud and close, and a distant wail somewhere
+// across the city whenever the heat is on. A looping band of noise screeches
+// while the player's tyres slide, and traffic horns answer when you block the
+// lane. Nothing starts until the player first interacts — browsers require a
+// user gesture before audio may play.
 
 const BASS_NOTES = [55, 55, 65.41, 49, 55, 55, 73.42, 65.41];
 // A pentatonic lead over the bass: sparse plucks, one every few steps.
@@ -15,6 +19,7 @@ export function createAudio() {
   let engineGain = null;
   let sirenOsc = null;
   let sirenGain = null;
+  let ambienceGain = null;
   let screechGain = null;
   let musicTimer = null;
   let musicStep = 0;
@@ -31,6 +36,7 @@ export function createAudio() {
       master.connect(context.destination);
       startEngine();
       startSiren();
+      startAmbience();
       startScreech();
       startMusic();
       return true;
@@ -63,6 +69,33 @@ export function createAudio() {
     sirenOsc.connect(sirenGain);
     sirenGain.connect(master);
     sirenOsc.start();
+  }
+
+  function startAmbience() {
+    // The far-off siren: a slow sine wail, an LFO dragging its pitch up and
+    // down over nine seconds, muffled through a low filter. It is the sound of
+    // the rest of the force, somewhere out there in the city, while you are
+    // wanted — never loud, never quite locatable.
+    const osc = context.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 740;
+    const lfo = context.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.11;
+    const lfoGain = context.createGain();
+    lfoGain.gain.value = 170;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    const filter = context.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 850;
+    ambienceGain = context.createGain();
+    ambienceGain.gain.value = 0;
+    osc.connect(filter);
+    filter.connect(ambienceGain);
+    ambienceGain.connect(master);
+    osc.start();
+    lfo.start();
   }
 
   function startScreech() {
@@ -184,13 +217,23 @@ export function createAudio() {
     isMuted() {
       return muted;
     },
-    /** Call every frame: engine pitch follows speed, the siren wails while wanted, the screech follows the slide. */
+    /**
+     * Call every frame: the engine pitch climbs gear by gear with speed, the
+     * close siren wails while wanted with the distant one underneath it, and
+     * the screech follows the slide.
+     */
     update({ driving, speed, wanted, sliding }) {
       if (!context) return;
       const now = context.currentTime;
       if (engineOsc) {
-        engineOsc.frequency.setTargetAtTime(48 + Math.abs(speed) * 0.22, now, 0.08);
-        engineGain.gain.setTargetAtTime(driving ? 0.05 + Math.abs(speed) * 0.00008 : 0.012, now, 0.1);
+        // Stepped gears: the pitch climbs inside a gear, drops at the shift,
+        // and climbs again — the oldest sound in driving games.
+        const s = Math.abs(speed);
+        const gear = Math.min(4, Math.floor(s / 170));
+        const inGear = Math.min(1, (s - gear * 170) / 170);
+        const freq = 46 + gear * 7 + inGear * 52;
+        engineOsc.frequency.setTargetAtTime(freq, now, 0.08);
+        engineGain.gain.setTargetAtTime(driving ? 0.05 + s * 0.00008 : 0.012, now, 0.1);
       }
       if (sirenOsc) {
         const target = wanted > 0 ? 0.045 : 0;
@@ -199,6 +242,9 @@ export function createAudio() {
           const phase = Math.floor(now * 2.4) % 2 === 0 ? 660 : 880;
           sirenOsc.frequency.setTargetAtTime(phase, now, 0.05);
         }
+      }
+      if (ambienceGain) {
+        ambienceGain.gain.setTargetAtTime(wanted > 0 ? 0.011 + wanted * 0.0016 : 0, now, 0.4);
       }
       if (screechGain) {
         screechGain.gain.setTargetAtTime(sliding ? 0.11 : 0, now, 0.06);
@@ -215,10 +261,18 @@ export function createAudio() {
       tone(880, 0.09, 'sine', 0.22);
       window.setTimeout(() => tone(1318, 0.16, 'sine', 0.22), 80);
     },
+    /** A traffic horn: two square tones a fourth apart, short and annoyed. */
+    honk() {
+      tone(370, 0.17, 'square', 0.055);
+      tone(466, 0.17, 'square', 0.045);
+    },
+    /** The fail sting: everything slides down, and something thuds. */
     fail() {
       tone(220, 0.45, 'sawtooth', 0.16, 110);
+      window.setTimeout(() => tone(165, 0.4, 'sawtooth', 0.13, 82), 130);
       burst(0.3, 240, 0.2);
     },
+    /** The success sting: a bright major arpeggio, up and paid. */
     missionComplete() {
       [523, 659, 784, 1047].forEach((freq, i) => {
         window.setTimeout(() => tone(freq, 0.22, 'triangle', 0.28), i * 110);

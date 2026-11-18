@@ -1,9 +1,9 @@
-// The screenshot scenes behind ?shot=start|foot|drive|chase. Each one plays the
+// The screenshot scenes behind ?shot=start|race|drive|heli. Each one plays the
 // real rules forward from a fresh world for a fixed number of steps, steered by
 // a small autopilot, so every frame is what a short game really looks like — and
 // the same seed always gives the same frame.
 
-import { SAFEHOUSE, STEP } from './config.js';
+import { STEP } from './config.js';
 import { EVENT_OVER } from './world.js';
 import { startMission } from './missions.js';
 import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
@@ -60,33 +60,23 @@ function driveEast(world, seconds) {
 
 /**
  * Set `world` to the named scene and return the screen to draw over it.
- * start: the title screen over a living city in golden morning light. foot: on
- * foot inside the safehouse ring, two stars up, lying low. drive: behind the
- * wheel of a sports coupe in traffic, sliding through the centre. chase: dusk,
- * four stars, a roadblock across the road ahead and the getaway job on the HUD.
+ * start: the title screen over a living city in golden morning light. race:
+ * the Harbor Sprint a moment after the first gate — the magenta rival coupe
+ * alongside, the standings on the HUD, the next gate off-screen east. drive:
+ * behind the wheel of a sports coupe in traffic, sliding through the centre.
+ * heli: deep night, five stars, the kingpin run — the helicopter overhead with
+ * its spotlight pinned to the car and a roadblock forming ahead.
  */
 export function stageShot(name, world) {
   world.reset();
-  if (name === 'foot') {
-    world.time = 60;
-    placePlayer(world, SAFEHOUSE.x - 70, SAFEHOUSE.y + 46);
-    world.wanted = 2;
-    world.timeSinceCrime = 0;
-    // Two of the parked steals in view, waiting on the road south of the ring.
-    const parked = world.cars.filter((c) => c.driver === 'none');
-    if (parked[0]) {
-      parked[0].x = 1368;
-      parked[0].y = 1180;
-      parked[0].angle = Math.PI / 2;
-    }
-    if (parked[1]) {
-      parked[1].x = 1432;
-      parked[1].y = 1252;
-      parked[1].angle = Math.PI / 2;
-    }
-    for (let i = 0; i < Math.floor(2 / STEP); i += 1) {
-      world.step(STEP, scriptedInput(0, 0), false);
-    }
+  if (name === 'race') {
+    world.time = 30;
+    startMission(world, 4);
+    placePlayer(world, 830, 600);
+    parkCarBesidePlayer(world, 'sports');
+    world.toggleCar();
+    if (world.player.car) world.player.car.speed = 120; // already rolling
+    driveEast(world, 1.5);
     return { screen: SCREEN_PLAY };
   }
   if (name === 'drive') {
@@ -98,10 +88,10 @@ export function stageShot(name, world) {
     driveEast(world, 3.4);
     return { screen: SCREEN_PLAY };
   }
-  if (name === 'chase') {
-    // Dusk: halfway through the day cycle, the light low and the windows lit.
-    world.time = 150;
-    startMission(world, 5);
+  if (name === 'heli') {
+    // Deep night: two-thirds through the day cycle, the city dark and lit.
+    world.time = 205;
+    startMission(world, 8);
     placePlayer(world, 500, 600);
     parkCarBesidePlayer(world, 'sedan');
     world.toggleCar();

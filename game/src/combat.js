@@ -1,6 +1,6 @@
 // On-foot shooting: mouse aim, click or Space to fire. Bullets fly straight, hit
 // police cruisers and pedestrians, and spark against buildings. Firing is a crime —
-// it draws the wanted level up.
+// it draws the wanted level up, and the sound of it sends the street running.
 
 import { BULLET_DAMAGE, BULLET_RANGE, BULLET_SPEED } from './config.js';
 import { hitsBuilding } from './city.js';
@@ -65,6 +65,7 @@ export function updateBullets(world, dt) {
         if (Math.hypot(ped.x - b.x, ped.y - b.y) < 14) {
           ped.state = 'panic';
           ped.panicTimer = 2;
+          ped.watchTimer = 0;
           spawnSparks(world, b.x, b.y, '#ff5a5a');
           addWanted(world, 1);
           dead = true;

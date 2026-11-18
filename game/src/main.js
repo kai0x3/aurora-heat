@@ -3,14 +3,14 @@
 // paints what is there. The game moves between four screens: title, play, paused
 // and game over. Progress (money, best haul, jobs done) is saved to localStorage.
 //
-// ?seed=N fixes the city's layout. ?shot=start|foot|drive|chase (with &seed=N)
+// ?seed=N fixes the city's layout. ?shot=start|race|drive|heli (with &seed=N)
 // stages that scene instead of running the loop, paints it twice and sets
 // window.__shotReady for a screenshot.
 
 import { SAVE_KEY, STEP } from './config.js';
 import {
-  EVENT_CHECKPOINT, EVENT_CRASH, EVENT_FAIL, EVENT_MISSION, EVENT_OVER,
-  EVENT_PACKAGE, EVENT_PICKUP, EVENT_SHOT, createWorld, shootAt,
+  EVENT_CHECKPOINT, EVENT_CRASH, EVENT_FAIL, EVENT_HONK, EVENT_MISSION,
+  EVENT_OVER, EVENT_PACKAGE, EVENT_PICKUP, EVENT_SHOT, createWorld, shootAt,
 } from './world.js';
 import { ACTION_CONFIRM, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
 import { createAudio } from './audio.js';
@@ -163,6 +163,7 @@ function runGame() {
       announce(missionEventText(world, 'mission-failed'));
     }
     if (events & EVENT_CRASH) audio.crash();
+    if (events & EVENT_HONK) audio.honk();
     if (events & EVENT_MISSION) {
       audio.missionComplete();
       saveProgress();

@@ -5,18 +5,26 @@
 //
 // One rule matters more than it looks: the traffic update steers only cars whose
 // driver is the traffic AI. The player's car and parked cars are never touched by
-// it — the wheel belongs to whoever is actually driving.
+// it — the wheel belongs to whoever is actually driving. The race rival's coupe
+// answers to its own update for the same reason.
 
 import {
-  CASH_PICKUP_VALUE, PLAYER_HEALTH_MAX, PLAYER_RADIUS, PLAYER_WALK_SPEED,
-  WORLD_HEIGHT, WORLD_WIDTH,
+  CAR_MAX_HP, CASH_PICKUP_VALUE, DAMAGE_HANDLING_HP, DAMAGE_SMOKE_HP,
+  PLAYER_HEALTH_MAX, PLAYER_RADIUS, PLAYER_WALK_SPEED, REPAIR_TICK_COST,
+  REPAIR_TICK_HP, REPAIR_TICK_SECONDS, WORLD_HEIGHT, WORLD_WIDTH,
 } from './config.js';
 import { generateCity, hitsBuilding, isInWater, resolveBuildingCollision } from './city.js';
 import { createRng } from './random.js';
-import { nearestCarTo, spawnParkedCars, spawnPedestrians, spawnTraffic, updatePedestrian, updateTrafficCar } from './traffic.js';
-import { addWanted, updatePoliceCar, updatePoliceSpawns, updateRoadblocks, updateWanted } from './police.js';
+import {
+  nearestCarTo, spawnParkedCars, spawnPedestrians, spawnTraffic, updatePedestrian,
+  updateRivalCar, updateTrafficCar,
+} from './traffic.js';
+import {
+  addWanted, playerAtSafehouse, updateHelicopter, updatePoliceCar,
+  updatePoliceSpawns, updateRoadblocks, updateWanted,
+} from './police.js';
 import { destroyPoliceCar, fireBullet, updateBullets } from './combat.js';
-import { startMission, updateMission } from './missions.js';
+import { damageCargoOnCrash, startMission, updateMission } from './missions.js';
 
 export const EVENT_MISSION = 1;
 export const EVENT_PICKUP = 2;
@@ -26,6 +34,7 @@ export const EVENT_SHOT = 16;
 export const EVENT_FAIL = 32;
 export const EVENT_CHECKPOINT = 64;
 export const EVENT_CRASH = 128;
+export const EVENT_HONK = 256;
 
 const PLAYER_SPAWN = { x: 600, y: 600 };
 const SKID_MAX = 520;
@@ -45,7 +54,10 @@ export function createWorld(seed) {
     wanted: 0, wantedTimer: 0, timeSinceCrime: 99,
     missionIndex: 0, mission: null, missionsDone: 0,
     roadblock: { cars: [], cooldown: 0 },
+    heli: { x: 0, y: 0, spotX: 0, spotY: 0, active: false, orbit: 0, rotor: 0 },
+    rival: null,
     jobToast: null, jobFailed: null, playerSliding: false, smokeTimer: 0,
+    lastCrash: { x: 0, y: 0, time: -99 }, damageFlashAt: -99, repairTimer: 0,
     camera: { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y },
     time: 0, fireCooldown: 0, shotsFired: 0, carsStolen: 0,
     over: false, overReason: '',
@@ -81,10 +93,15 @@ function reset(world) {
   world.missionIndex = 0;
   world.missionsDone = 0;
   world.roadblock = { cars: [], cooldown: 0 };
+  world.heli = { x: 0, y: 0, spotX: 0, spotY: 0, active: false, orbit: 0, rotor: 0 };
+  world.rival = null;
   world.jobToast = null;
   world.jobFailed = null;
   world.playerSliding = false;
   world.smokeTimer = 0;
+  world.lastCrash = { x: 0, y: 0, time: -99 };
+  world.damageFlashAt = -99;
+  world.repairTimer = 0;
   world.camera.x = player.x;
   world.camera.y = player.y;
   world.time = 0;
@@ -168,8 +185,11 @@ function updatePlayerOnFoot(world, dt, input) {
 
 /**
  * Drive the player's car with that car kind's own numbers — its top speed, its
- * acceleration, its steering. A hard turn at speed lays a pair of skid marks and
- * sets the tyres screaming; a roadblock in the way gets shoved, hard.
+ * acceleration, its steering — discounted by the car's own damage once the
+ * damage is deep: a wreck with a third of its strength left pulls at barely
+ * two-thirds pace. A hard turn at speed lays a pair of skid marks and sets the
+ * tyres screaming; a roadblock in the way gets shoved, hard; and every hard
+ * knock costs the car hit points and, with the glassware aboard, cargo.
  */
 function updatePlayerDriving(world, dt, input) {
   const player = world.player;
@@ -181,9 +201,12 @@ function updatePlayerDriving(world, dt, input) {
   }
   let events = 0;
   const stats = car.stats;
+  const wear = car.hp < DAMAGE_HANDLING_HP
+    ? 0.62 + 0.38 * (Math.max(0, car.hp) / DAMAGE_HANDLING_HP)
+    : 1;
   const forward = input.moveY() < 0 ? 1 : input.moveY() > 0 ? -1 : 0;
   const steerInput = input.moveX();
-  if (forward > 0) car.speed = Math.min(stats.topSpeed, car.speed + stats.accel * dt);
+  if (forward > 0) car.speed = Math.min(stats.topSpeed * wear, car.speed + stats.accel * wear * dt);
   else if (forward < 0) {
     car.speed = car.speed > 0
       ? Math.max(0, car.speed - stats.brake * dt)
@@ -201,7 +224,12 @@ function updatePlayerDriving(world, dt, input) {
     car.x = nx;
     car.y = ny;
   } else {
-    if (Math.abs(car.speed) > 200) events |= EVENT_CRASH;
+    if (Math.abs(car.speed) > 200) {
+      events |= EVENT_CRASH;
+      car.hp = Math.max(0, car.hp - (Math.abs(car.speed) - 180) / 20);
+      world.damageFlashAt = world.time;
+      world.lastCrash = { x: car.x, y: car.y, time: world.time };
+    }
     car.speed *= -0.25;
     spawnCrashSparks(world, car.x, car.y);
   }
@@ -227,7 +255,10 @@ function updatePlayerDriving(world, dt, input) {
       blockCar.vy = Math.sin(push) * power * 0.85;
       blockCar.spin = world.rng.range(-3, 3);
       blockCar.hp -= power * 0.1;
+      car.hp = Math.max(0, car.hp - power * 0.045);
       car.speed *= 0.5;
+      world.damageFlashAt = world.time;
+      world.lastCrash = { x: car.x, y: car.y, time: world.time };
       spawnCrashSparks(world, (car.x + blockCar.x) / 2, (car.y + blockCar.y) / 2);
       events |= EVENT_CRASH;
       if (blockCar.hp <= 0) destroyPoliceCar(world, blockCar);
@@ -244,6 +275,19 @@ function updatePlayerDriving(world, dt, input) {
       addWanted(world, 1);
       car.speed *= 0.6;
     }
+  }
+
+  // The safehouse crew earns its keep: park a hurt car inside the ring and
+  // they patch it, a few points at a time, billed by the tick.
+  if (car.hp < CAR_MAX_HP && player.money >= REPAIR_TICK_COST && playerAtSafehouse(world)) {
+    world.repairTimer += dt;
+    while (world.repairTimer >= REPAIR_TICK_SECONDS && car.hp < CAR_MAX_HP && player.money >= REPAIR_TICK_COST) {
+      world.repairTimer -= REPAIR_TICK_SECONDS;
+      car.hp = Math.min(CAR_MAX_HP, car.hp + REPAIR_TICK_HP);
+      player.money -= REPAIR_TICK_COST;
+    }
+  } else {
+    world.repairTimer = 0;
   }
   return events;
 }
@@ -264,19 +308,25 @@ function laySkidMarks(world, car) {
   if (world.skids.length > SKID_MAX) world.skids.splice(0, world.skids.length - SKID_MAX);
 }
 
-/** A car running on a hurt player smokes from the bonnet. */
+/**
+ * A hurt car smokes from the bonnet: a wisp now and then below DAMAGE_SMOKE_HP,
+ * a steady darkening trail as the damage deepens. The smoke follows the car's
+ * own hit points — steal a fresh car and the bonnet is clean again.
+ */
 function updateEngineSmoke(world, dt) {
   const player = world.player;
-  if (player.onFoot || !player.car || player.health >= 40) return;
+  if (player.onFoot || !player.car || player.car.hp >= DAMAGE_SMOKE_HP) return;
   world.smokeTimer -= dt;
   if (world.smokeTimer > 0) return;
-  world.smokeTimer = 0.07;
   const car = player.car;
+  world.smokeTimer = car.hp < DAMAGE_HANDLING_HP ? 0.05 : 0.12;
   world.particles.push({
     x: car.x + Math.cos(car.angle) * (car.length / 2),
     y: car.y + Math.sin(car.angle) * (car.length / 2),
     vx: world.rng.range(-16, 16), vy: world.rng.range(-44, -18),
-    life: 0.9, maxLife: 0.9, color: '#666', size: 6,
+    life: 0.9, maxLife: 0.9,
+    color: car.hp < DAMAGE_HANDLING_HP ? '#3d3d3d' : '#6f6f6f',
+    size: 5 + (DAMAGE_SMOKE_HP - car.hp) * 0.07,
   });
 }
 
@@ -316,15 +366,18 @@ function updatePickups(world) {
 function updatePoliceDamage(world, dt) {
   const player = world.player;
   if (player.health <= 0) return;
+  const healthBefore = player.health;
   for (const car of world.police) {
     const dist = Math.hypot(car.x - player.x, car.y - player.y);
     if (player.onFoot && dist < 46) {
       player.health -= 26 * dt;
     } else if (!player.onFoot && player.car && dist < 58) {
       player.health -= 6 * dt;
+      player.car.hp = Math.max(0, player.car.hp - 5 * dt);
       player.car.speed *= Math.max(0, 1 - 0.8 * dt);
     }
   }
+  if (player.health < healthBefore) world.damageFlashAt = world.time;
   if (player.health <= 0) {
     player.health = 0;
     world.over = true;
@@ -344,11 +397,29 @@ export function stepWorld(world, dt, input, harmless) {
   for (const car of world.cars) {
     if (car.kind === 'police') updatePoliceCar(car, world, dt);
     else if (car.driver === 'ai') updateTrafficCar(car, dt, world.rng, world.player);
+    if (car.honkReady) {
+      car.honkReady = false;
+      events |= EVENT_HONK;
+    }
   }
+  // The race rival drives her own line to the next gate — but only once the
+  // player has started her clock, and only while her job is the live one.
+  const rival = world.rival;
+  if (rival && rival.started && !rival.finished && world.mission && world.mission.stage === 'race') {
+    const gate = world.mission.def.checkpoints[rival.gate];
+    if (gate) updateRivalCar(rival.car, gate.x, gate.y, dt, world.city);
+  }
+  // What the street fears, and what it stops to watch: gunfire first, then a
+  // wanted or reckless driver; a fresh crash is a spectacle either way.
+  const player = world.player;
+  const reckless = !player.onFoot && Math.abs(player.speed) > 240;
   const danger = world.bullets.length > 0
     ? { x: world.bullets[0].x, y: world.bullets[0].y }
-    : (world.wanted > 0 ? { x: world.player.x, y: world.player.y } : null);
-  for (const ped of world.peds) updatePedestrian(ped, dt, world.rng, danger);
+    : (world.wanted > 0 || reckless ? { x: player.x, y: player.y } : null);
+  const spectacle = world.time - world.lastCrash.time < 4
+    ? world.lastCrash
+    : (world.wanted >= 2 ? { x: player.x, y: player.y } : null);
+  for (const ped of world.peds) updatePedestrian(ped, dt, world.rng, danger, spectacle);
   updateBullets(world, dt);
   for (let i = world.particles.length - 1; i >= 0; i -= 1) {
     const p = world.particles[i];
@@ -365,9 +436,14 @@ export function stepWorld(world, dt, input, harmless) {
   if (!harmless) {
     if (world.player.onFoot) updatePlayerOnFoot(world, dt, input);
     else events |= updatePlayerDriving(world, dt, input);
+    // A crash with the glassware aboard is a mission event, not just a noise.
+    if (events & EVENT_CRASH) {
+      if (damageCargoOnCrash(world) === 'mission-failed') events |= EVENT_FAIL;
+    }
     updateWanted(world, dt);
     updatePoliceSpawns(world, dt);
     updateRoadblocks(world, dt);
+    updateHelicopter(world, dt);
     updatePoliceDamage(world, dt);
     updateEngineSmoke(world, dt);
     events |= updatePickups(world);
