@@ -2,17 +2,20 @@
 // it all. This module owns the state and the rules that tie the other modules
 // together — the player on foot and behind the wheel, car theft, pickups, damage,
 // the camera — but it draws nothing and hears nothing.
+//
+// One rule matters more than it looks: the traffic update steers only cars whose
+// driver is the traffic AI. The player's car and parked cars are never touched by
+// it — the wheel belongs to whoever is actually driving.
 
 import {
-  CAR_ACCEL, CAR_BRAKE, CAR_LENGTH, CAR_MAX_SPEED, CAR_REVERSE_MAX, CAR_STEER,
   CASH_PICKUP_VALUE, PLAYER_HEALTH_MAX, PLAYER_RADIUS, PLAYER_WALK_SPEED,
   WORLD_HEIGHT, WORLD_WIDTH,
 } from './config.js';
 import { generateCity, hitsBuilding, isInWater, resolveBuildingCollision } from './city.js';
 import { createRng } from './random.js';
-import { nearestCarTo, spawnPedestrians, spawnTraffic, updatePedestrian, updateTrafficCar } from './traffic.js';
-import { addWanted, updatePoliceCar, updatePoliceSpawns, updateWanted } from './police.js';
-import { fireBullet, updateBullets } from './combat.js';
+import { nearestCarTo, spawnParkedCars, spawnPedestrians, spawnTraffic, updatePedestrian, updateTrafficCar } from './traffic.js';
+import { addWanted, updatePoliceCar, updatePoliceSpawns, updateRoadblocks, updateWanted } from './police.js';
+import { destroyPoliceCar, fireBullet, updateBullets } from './combat.js';
 import { startMission, updateMission } from './missions.js';
 
 export const EVENT_MISSION = 1;
@@ -20,8 +23,13 @@ export const EVENT_PICKUP = 2;
 export const EVENT_PACKAGE = 4;
 export const EVENT_OVER = 8;
 export const EVENT_SHOT = 16;
+export const EVENT_FAIL = 32;
+export const EVENT_CHECKPOINT = 64;
+export const EVENT_CRASH = 128;
 
 const PLAYER_SPAWN = { x: 600, y: 600 };
+const SKID_MAX = 520;
+const SKID_LIFE = 3.5;
 
 export function createWorld(seed) {
   const rng = createRng(seed);
@@ -33,9 +41,11 @@ export function createWorld(seed) {
   };
   const world = {
     rng, city, player,
-    cars: [], police: [], peds: [], bullets: [], particles: [], pickups: [],
+    cars: [], police: [], peds: [], bullets: [], particles: [], pickups: [], skids: [],
     wanted: 0, wantedTimer: 0, timeSinceCrime: 99,
     missionIndex: 0, mission: null, missionsDone: 0,
+    roadblock: { cars: [], cooldown: 0 },
+    jobToast: null, jobFailed: null, playerSliding: false, smokeTimer: 0,
     camera: { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y },
     time: 0, fireCooldown: 0, shotsFired: 0, carsStolen: 0,
     over: false, overReason: '',
@@ -58,17 +68,23 @@ function reset(world) {
   player.onFoot = true;
   player.car = null;
   player.speed = 0;
-  world.cars = spawnTraffic(rng, city);
+  world.cars = [...spawnTraffic(rng, city), ...spawnParkedCars(rng, city)];
   world.police = [];
   world.peds = spawnPedestrians(rng, city);
   world.bullets = [];
   world.particles = [];
+  world.skids = [];
   world.pickups = makeCashPickups(rng, city);
   world.wanted = 0;
   world.wantedTimer = 0;
   world.timeSinceCrime = 99;
   world.missionIndex = 0;
   world.missionsDone = 0;
+  world.roadblock = { cars: [], cooldown: 0 };
+  world.jobToast = null;
+  world.jobFailed = null;
+  world.playerSliding = false;
+  world.smokeTimer = 0;
   world.camera.x = player.x;
   world.camera.y = player.y;
   world.time = 0;
@@ -133,6 +149,7 @@ export function toggleCar(world) {
 
 function updatePlayerOnFoot(world, dt, input) {
   const player = world.player;
+  world.playerSliding = false;
   const mx = input.moveX();
   const my = input.moveY();
   const len = Math.hypot(mx, my);
@@ -149,33 +166,42 @@ function updatePlayerOnFoot(world, dt, input) {
   if (isInWater(player.x, player.y)) player.y = Math.min(player.y, WORLD_HEIGHT - 140);
 }
 
+/**
+ * Drive the player's car with that car kind's own numbers — its top speed, its
+ * acceleration, its steering. A hard turn at speed lays a pair of skid marks and
+ * sets the tyres screaming; a roadblock in the way gets shoved, hard.
+ */
 function updatePlayerDriving(world, dt, input) {
   const player = world.player;
   const car = player.car;
   if (!car) {
     player.onFoot = true;
-    return;
+    world.playerSliding = false;
+    return 0;
   }
+  let events = 0;
+  const stats = car.stats;
   const forward = input.moveY() < 0 ? 1 : input.moveY() > 0 ? -1 : 0;
   const steerInput = input.moveX();
-  if (forward > 0) car.speed = Math.min(CAR_MAX_SPEED, car.speed + CAR_ACCEL * dt);
+  if (forward > 0) car.speed = Math.min(stats.topSpeed, car.speed + stats.accel * dt);
   else if (forward < 0) {
     car.speed = car.speed > 0
-      ? Math.max(0, car.speed - CAR_BRAKE * dt)
-      : Math.max(-CAR_REVERSE_MAX, car.speed - CAR_ACCEL * 0.6 * dt);
+      ? Math.max(0, car.speed - stats.brake * dt)
+      : Math.max(-stats.reverseMax, car.speed - stats.accel * 0.6 * dt);
   } else {
     car.speed *= Math.max(0, 1 - 1.6 * dt);
     if (Math.abs(car.speed) < 4) car.speed = 0;
   }
   const direction = car.speed >= 0 ? 1 : -1;
-  car.angle += steerInput * CAR_STEER * dt * direction * Math.min(1, Math.abs(car.speed) / 160 + 0.25);
+  car.angle += steerInput * stats.steer * dt * direction * Math.min(1, Math.abs(car.speed) / 160 + 0.25);
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  const blocked = hitsBuilding(world.city, nx, ny, CAR_LENGTH / 2);
+  const blocked = hitsBuilding(world.city, nx, ny, car.length / 2);
   if (!blocked) {
     car.x = nx;
     car.y = ny;
   } else {
+    if (Math.abs(car.speed) > 200) events |= EVENT_CRASH;
     car.speed *= -0.25;
     spawnCrashSparks(world, car.x, car.y);
   }
@@ -185,6 +211,29 @@ function updatePlayerDriving(world, dt, input) {
   player.y = car.y;
   player.angle = car.angle;
   player.speed = car.speed;
+
+  // Sliding: fast and steering hard. The rear tyres leave their mark on the road.
+  const sliding = Math.abs(car.speed) > 240 && steerInput !== 0;
+  world.playerSliding = sliding;
+  if (sliding) laySkidMarks(world, car);
+
+  // A roadblock is two cruisers across the road: hit one and it goes spinning.
+  for (const blockCar of [...world.roadblock.cars]) {
+    const dist = Math.hypot(blockCar.x - car.x, blockCar.y - car.y);
+    if (dist < 48 && Math.abs(car.speed) > 40) {
+      const push = Math.atan2(blockCar.y - car.y, blockCar.x - car.x);
+      const power = Math.abs(car.speed);
+      blockCar.vx = Math.cos(push) * power * 0.85;
+      blockCar.vy = Math.sin(push) * power * 0.85;
+      blockCar.spin = world.rng.range(-3, 3);
+      blockCar.hp -= power * 0.1;
+      car.speed *= 0.5;
+      spawnCrashSparks(world, (car.x + blockCar.x) / 2, (car.y + blockCar.y) / 2);
+      events |= EVENT_CRASH;
+      if (blockCar.hp <= 0) destroyPoliceCar(world, blockCar);
+    }
+  }
+
   // Running over a pedestrian is a crime; hitting one slows the car.
   for (const ped of world.peds) {
     if (Math.hypot(ped.x - car.x, ped.y - car.y) < 34 && Math.abs(car.speed) > 60) {
@@ -196,6 +245,39 @@ function updatePlayerDriving(world, dt, input) {
       car.speed *= 0.6;
     }
   }
+  return events;
+}
+
+/** A pair of dark streaks under the rear wheels, fading over a few seconds. */
+function laySkidMarks(world, car) {
+  const backX = car.x - Math.cos(car.angle) * (car.length / 2 - 4);
+  const backY = car.y - Math.sin(car.angle) * (car.length / 2 - 4);
+  const perpX = Math.cos(car.angle + Math.PI / 2);
+  const perpY = Math.sin(car.angle + Math.PI / 2);
+  for (const side of [-1, 1]) {
+    world.skids.push({
+      x: backX + perpX * (car.width / 2 - 3) * side,
+      y: backY + perpY * (car.width / 2 - 3) * side,
+      angle: car.angle, life: SKID_LIFE, maxLife: SKID_LIFE,
+    });
+  }
+  if (world.skids.length > SKID_MAX) world.skids.splice(0, world.skids.length - SKID_MAX);
+}
+
+/** A car running on a hurt player smokes from the bonnet. */
+function updateEngineSmoke(world, dt) {
+  const player = world.player;
+  if (player.onFoot || !player.car || player.health >= 40) return;
+  world.smokeTimer -= dt;
+  if (world.smokeTimer > 0) return;
+  world.smokeTimer = 0.07;
+  const car = player.car;
+  world.particles.push({
+    x: car.x + Math.cos(car.angle) * (car.length / 2),
+    y: car.y + Math.sin(car.angle) * (car.length / 2),
+    vx: world.rng.range(-16, 16), vy: world.rng.range(-44, -18),
+    life: 0.9, maxLife: 0.9, color: '#666', size: 6,
+  });
 }
 
 function spawnCrashSparks(world, x, y) {
@@ -260,8 +342,8 @@ export function stepWorld(world, dt, input, harmless) {
   if (world.fireCooldown > 0) world.fireCooldown -= dt;
 
   for (const car of world.cars) {
-    if (car.kind === 'traffic') updateTrafficCar(car, dt, world.rng, world.player);
-    else if (car.kind === 'police') updatePoliceCar(car, world, dt);
+    if (car.kind === 'police') updatePoliceCar(car, world, dt);
+    else if (car.driver === 'ai') updateTrafficCar(car, dt, world.rng, world.player);
   }
   const danger = world.bullets.length > 0
     ? { x: world.bullets[0].x, y: world.bullets[0].y }
@@ -275,17 +357,25 @@ export function stepWorld(world, dt, input, harmless) {
     p.life -= dt;
     if (p.life <= 0) world.particles.splice(i, 1);
   }
+  for (let i = world.skids.length - 1; i >= 0; i -= 1) {
+    world.skids[i].life -= dt;
+    if (world.skids[i].life <= 0) world.skids.splice(i, 1);
+  }
 
   if (!harmless) {
     if (world.player.onFoot) updatePlayerOnFoot(world, dt, input);
-    else updatePlayerDriving(world, dt, input);
+    else events |= updatePlayerDriving(world, dt, input);
     updateWanted(world, dt);
     updatePoliceSpawns(world, dt);
+    updateRoadblocks(world, dt);
     updatePoliceDamage(world, dt);
+    updateEngineSmoke(world, dt);
     events |= updatePickups(world);
-    const missionEvent = updateMission(world);
+    const missionEvent = updateMission(world, dt);
     if (missionEvent === 'mission-complete') events |= EVENT_MISSION;
     else if (missionEvent === 'package-picked') events |= EVENT_PACKAGE;
+    else if (missionEvent === 'mission-failed') events |= EVENT_FAIL;
+    else if (missionEvent === 'checkpoint') events |= EVENT_CHECKPOINT;
     if (world.over) events |= EVENT_OVER;
   }
   updateCamera(world, dt);

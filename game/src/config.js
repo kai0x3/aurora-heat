@@ -23,16 +23,36 @@ export const PLAYER_RADIUS = 13;
 export const PLAYER_WALK_SPEED = 250;
 export const PLAYER_HEALTH_MAX = 100;
 
-// Cars.
+// Fallback car dimensions (police cruisers; traffic cars carry their own).
 export const CAR_LENGTH = 52;
 export const CAR_WIDTH = 26;
-export const CAR_ACCEL = 460;
-export const CAR_BRAKE = 700;
-export const CAR_MAX_SPEED = 560;
-export const CAR_REVERSE_MAX = 200;
-export const CAR_STEER = 2.6;
+
+// The four kinds of car on Port Aurora's streets. Each drives differently: the
+// truck lumbers, the sports coupe is the fastest thing in the city, and the
+// sedan and taxi sit in between. Police cruisers borrow the sedan's shape.
+export const VEHICLE_TYPES = {
+  sedan: { topSpeed: 540, accel: 440, brake: 700, reverseMax: 190, steer: 2.6, length: 52, width: 26 },
+  taxi: { topSpeed: 520, accel: 430, brake: 700, reverseMax: 190, steer: 2.6, length: 52, width: 26 },
+  sports: { topSpeed: 720, accel: 620, brake: 820, reverseMax: 220, steer: 2.9, length: 54, width: 27 },
+  truck: { topSpeed: 430, accel: 300, brake: 560, reverseMax: 150, steer: 1.9, length: 72, width: 32 },
+};
+
 export const TRAFFIC_SPEED = 150;
 export const POLICE_SPEED = 520;
+
+// The Sol Plaza safehouse: the hideout the second job delivers to. Standing
+// inside its ring cools the wanted level much faster than lying low elsewhere.
+export const SAFEHOUSE = { x: 1400, y: 1000, radius: 180 };
+export const SAFEHOUSE_COOL_RATE = 3.5;
+
+// Police roadblocks: at four stars and up, cruisers park across the road ahead.
+// After one is scattered or outrun, the next forms this many seconds later —
+// sooner at five stars, when the whole force is committed.
+export const ROADBLOCK_COOLDOWN = 7;
+export const ROADBLOCK_COOLDOWN_HOT = 4;
+
+// One full turn of the day: golden morning, dusk, blue night and back again.
+export const DAY_CYCLE_SECONDS = 300;
 
 // Combat.
 export const BULLET_SPEED = 900;
@@ -47,8 +67,6 @@ export const WANTED_MAX = 5;
 export const WANTED_DECAY_SECONDS = 7;
 export const WANTED_QUIET_SECONDS = 6;
 
-// Mission rewards (money earned is also the score).
-export const MISSION_REWARDS = [250, 400, 600];
 export const CASH_PICKUP_VALUE = 50;
 
 // Palette: a sun-soaked modern coastal city at golden hour.

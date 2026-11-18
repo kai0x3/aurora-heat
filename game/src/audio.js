@@ -1,9 +1,12 @@
 // Synthesized sound, no audio files: every effect is an oscillator or a burst of
 // filtered noise through the Web Audio API, and the music is a small bass loop
-// scheduled ahead of time. Nothing starts until the player first interacts —
-// browsers require a user gesture before audio may play.
+// with a pentatonic lead pluck over it, scheduled ahead of time. A looping band
+// of noise screeches while the player's tyres slide. Nothing starts until the
+// player first interacts — browsers require a user gesture before audio may play.
 
 const BASS_NOTES = [55, 55, 65.41, 49, 55, 55, 73.42, 65.41];
+// A pentatonic lead over the bass: sparse plucks, one every few steps.
+const LEAD_NOTES = [220, 261.63, 329.63, 392, 329.63, 293.66, 261.63, 220];
 
 export function createAudio() {
   let context = null;
@@ -12,6 +15,7 @@ export function createAudio() {
   let engineGain = null;
   let sirenOsc = null;
   let sirenGain = null;
+  let screechGain = null;
   let musicTimer = null;
   let musicStep = 0;
   let muted = false;
@@ -27,6 +31,7 @@ export function createAudio() {
       master.connect(context.destination);
       startEngine();
       startSiren();
+      startScreech();
       startMusic();
       return true;
     } catch {
@@ -60,8 +65,26 @@ export function createAudio() {
     sirenOsc.start();
   }
 
+  function startScreech() {
+    // Looping noise through a high band: silent until the tyres start sliding.
+    const noise = context.createBufferSource();
+    noise.buffer = noiseBuffer();
+    noise.loop = true;
+    const filter = context.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 950;
+    filter.Q.value = 2.5;
+    screechGain = context.createGain();
+    screechGain.gain.value = 0;
+    noise.connect(filter);
+    filter.connect(screechGain);
+    screechGain.connect(master);
+    noise.start();
+  }
+
   function startMusic() {
-    // A slow bass loop: one note every half second, scheduled a step at a time.
+    // A slow bass loop: one note every half second, scheduled a step at a time,
+    // with a soft hat on the off-beat and a lead pluck every fourth step.
     musicTimer = window.setInterval(() => {
       if (!context || muted) return;
       const note = BASS_NOTES[musicStep % BASS_NOTES.length];
@@ -88,6 +111,19 @@ export function createAudio() {
         hat.connect(master);
         noise.start(now + 0.25);
         noise.stop(now + 0.33);
+      }
+      // The lead: a quiet pentatonic pluck, triangle with a fast fall.
+      if (musicStep % 4 === 0) {
+        const lead = context.createOscillator();
+        lead.type = 'triangle';
+        lead.frequency.value = LEAD_NOTES[(musicStep / 4) % LEAD_NOTES.length];
+        const leadGain = context.createGain();
+        leadGain.gain.setValueAtTime(0.055, now);
+        leadGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+        lead.connect(leadGain);
+        leadGain.connect(master);
+        lead.start(now);
+        lead.stop(now + 0.4);
       }
     }, 500);
   }
@@ -148,8 +184,8 @@ export function createAudio() {
     isMuted() {
       return muted;
     },
-    /** Call every frame: engine pitch follows speed, siren wails while wanted. */
-    update({ driving, speed, wanted }) {
+    /** Call every frame: engine pitch follows speed, the siren wails while wanted, the screech follows the slide. */
+    update({ driving, speed, wanted, sliding }) {
       if (!context) return;
       const now = context.currentTime;
       if (engineOsc) {
@@ -164,6 +200,9 @@ export function createAudio() {
           sirenOsc.frequency.setTargetAtTime(phase, now, 0.05);
         }
       }
+      if (screechGain) {
+        screechGain.gain.setTargetAtTime(sliding ? 0.11 : 0, now, 0.06);
+      }
     },
     shot() {
       burst(0.12, 1800, 0.35);
@@ -171,6 +210,14 @@ export function createAudio() {
     pickup() {
       tone(660, 0.1, 'sine', 0.25);
       window.setTimeout(() => tone(880, 0.14, 'sine', 0.25), 90);
+    },
+    checkpoint() {
+      tone(880, 0.09, 'sine', 0.22);
+      window.setTimeout(() => tone(1318, 0.16, 'sine', 0.22), 80);
+    },
+    fail() {
+      tone(220, 0.45, 'sawtooth', 0.16, 110);
+      burst(0.3, 240, 0.2);
     },
     missionComplete() {
       [523, 659, 784, 1047].forEach((freq, i) => {

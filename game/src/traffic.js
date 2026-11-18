@@ -1,15 +1,59 @@
 // Traffic and pedestrians: the cars that cruise Port Aurora's roads and the people
 // walking its sidewalks. Traffic cars follow the road grid and turn at intersections;
-// pedestrians wander the blocks and run from gunfire and speeding cars.
+// pedestrians wander the blocks and run from gunfire and speeding cars. The traffic
+// update only ever steers a car whose driver is the traffic AI — a parked car sits
+// still, and the player's car answers to the player alone.
 
-import { ROAD_WIDTH, TRAFFIC_SPEED, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
+import { ROAD_WIDTH, TRAFFIC_SPEED, VEHICLE_TYPES, WORLD_HEIGHT, WORLD_WIDTH } from './config.js';
 import { hitsBuilding, isOnRoad, nearestRoadPoint, randomRoadPoint } from './city.js';
 
 export const TRAFFIC_COLORS = ['#d94f3d', '#3d7ad9', '#e8e3d8', '#3d3a38', '#7ab648', '#c9a13d', '#8a5fd9', '#d97ab0'];
 export const PED_COLORS = ['#e8e3d8', '#7ab648', '#d97ab0', '#3d7ad9', '#e8b23d', '#9a6b4f'];
 
+// Each car kind has its own paint box: taxis are yellow, sports coupes loud,
+// trucks whatever the freight company had on the lot.
+const TYPE_COLORS = {
+  sedan: TRAFFIC_COLORS,
+  taxi: ['#e8b23d'],
+  sports: ['#ff5340', '#ffd23f', '#37c8e0', '#e8e3d8'],
+  truck: ['#8a8f98', '#5f7a8a', '#a34a3d', '#e8e3d8'],
+};
+
+// How the traffic mix breaks down, by share of cars spawned.
+const TYPE_MIX = [
+  { type: 'sedan', share: 0.52 },
+  { type: 'taxi', share: 0.16 },
+  { type: 'sports', share: 0.14 },
+  { type: 'truck', share: 0.18 },
+];
+
+// The parked rows cycle through the kinds, so every kind is always on the street
+// to steal, whatever the traffic mix rolled.
+const PARKED_TYPES = ['sedan', 'taxi', 'sports', 'sedan', 'truck', 'sports'];
+
 const TRAFFIC_COUNT = 14;
 const PED_COUNT = 24;
+const PARKED_COUNT = 6;
+
+function pickTrafficType(rng) {
+  let roll = rng.next();
+  for (const entry of TYPE_MIX) {
+    if (roll < entry.share) return entry.type;
+    roll -= entry.share;
+  }
+  return 'sedan';
+}
+
+function buildCar(rng, type, x, y, angle, driver) {
+  const stats = VEHICLE_TYPES[type];
+  return {
+    kind: 'traffic', x, y, angle,
+    speed: driver === 'ai' ? TRAFFIC_SPEED * rng.range(0.8, 1.15) : 0,
+    type, stats, length: stats.length, width: stats.width,
+    color: rng.pick(TYPE_COLORS[type]),
+    hp: 100, driver, turnCooldown: rng.range(0, 2),
+  };
+}
 
 /** One traffic car: position, heading (0 = east, PI/2 = south), speed and colour. */
 function makeTrafficCar(rng, city) {
@@ -21,12 +65,30 @@ function makeTrafficCar(rng, city) {
   const lane = ROAD_WIDTH / 4;
   const x = point.axis === 'v' ? point.x + (angle === Math.PI / 2 ? lane : -lane) : point.x;
   const y = point.axis === 'v' ? point.y : point.y + (angle === 0 ? lane : -lane);
-  return {
-    kind: 'traffic', x, y, angle,
-    speed: TRAFFIC_SPEED * rng.range(0.8, 1.15),
-    color: rng.pick(TRAFFIC_COLORS),
-    hp: 100, driver: 'ai', turnCooldown: rng.range(0, 2),
-  };
+  return buildCar(rng, pickTrafficType(rng), x, y, angle, 'ai');
+}
+
+/**
+ * The quiet steals: cars parked in rows along the plaza and park edges and on the
+ * Marina shoulder, engines off, waiting for someone with no scruples and a job to do.
+ */
+export function spawnParkedCars(rng, city) {
+  const spots = [];
+  for (const area of [...city.plazas, ...city.parks]) {
+    for (let i = 0; i < 3; i += 1) {
+      spots.push({ x: area.x + 44 + i * 68, y: area.y + area.height - 36, angle: 0 });
+    }
+  }
+  for (let i = 0; i < 3; i += 1) {
+    spots.push({ x: 2600 + i * 74, y: 126, angle: 0 });
+  }
+  const cars = [];
+  for (const spot of spots) {
+    if (cars.length >= PARKED_COUNT) break;
+    if (hitsBuilding(city, spot.x, spot.y, 32)) continue;
+    cars.push(buildCar(rng, PARKED_TYPES[cars.length], spot.x, spot.y, spot.angle, 'none'));
+  }
+  return cars;
 }
 
 function makePedestrian(rng, city) {
@@ -60,9 +122,11 @@ export function spawnPedestrians(rng, city) {
 
 /**
  * Steer one traffic car along its road. At an intersection it may turn; near the
- * player it slows down; it never leaves the asphalt.
+ * player it slows down; it never leaves the asphalt. Only an AI-driven car is
+ * steered at all: a parked car has no driver, and the player's car is the player's.
  */
 export function updateTrafficCar(car, dt, rng, player) {
+  if (car.driver !== 'ai') return;
   car.turnCooldown -= dt;
   const aheadX = car.x + Math.cos(car.angle) * 40;
   const aheadY = car.y + Math.sin(car.angle) * 40;
@@ -120,7 +184,8 @@ export function updatePedestrian(ped, dt, rng, danger) {
   ped.y = Math.max(30, Math.min(WORLD_HEIGHT - 200, ped.y));
 }
 
-/** The closest car to (x, y) within `maxDist`, or null. */export function nearestCarTo(cars, x, y, maxDist) {
+/** The closest car to (x, y) within `maxDist`, or null. */
+export function nearestCarTo(cars, x, y, maxDist) {
   let best = null;
   let bestDist = maxDist;
   for (const car of cars) {

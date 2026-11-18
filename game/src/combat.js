@@ -87,8 +87,8 @@ function spawnSparks(world, x, y, color) {
   }
 }
 
-/** A cruiser shot to pieces: smoke, a wanted bump, and it leaves the street. */
-function destroyPoliceCar(world, car) {
+/** A cruiser shot (or rammed) to pieces: smoke, a wanted bump, and it leaves the street. */
+export function destroyPoliceCar(world, car) {
   for (let i = 0; i < 14; i += 1) {
     world.particles.push({
       x: car.x + world.rng.range(-20, 20),

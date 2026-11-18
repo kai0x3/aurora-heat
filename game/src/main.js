@@ -8,10 +8,14 @@
 // window.__shotReady for a screenshot.
 
 import { SAVE_KEY, STEP } from './config.js';
-import { createWorld, EVENT_MISSION, EVENT_OVER, EVENT_PACKAGE, EVENT_PICKUP, EVENT_SHOT, shootAt } from './world.js';
+import {
+  EVENT_CHECKPOINT, EVENT_CRASH, EVENT_FAIL, EVENT_MISSION, EVENT_OVER,
+  EVENT_PACKAGE, EVENT_PICKUP, EVENT_SHOT, createWorld, shootAt,
+} from './world.js';
 import { ACTION_CONFIRM, ACTION_ENTER_CAR, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { missionEventText } from './missions.js';
 import { stageShot } from './shots.js';
 
 /** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped. */
@@ -148,18 +152,31 @@ function runGame() {
     if (events & EVENT_PICKUP) audio.pickup();
     if (events & EVENT_PACKAGE) {
       audio.pickup();
-      announce('Package secured. Deliver it to the hideout on Sol Plaza.');
+      announce(missionEventText(world, 'package-picked'));
     }
+    if (events & EVENT_CHECKPOINT) {
+      audio.checkpoint();
+      announce(missionEventText(world, 'checkpoint'));
+    }
+    if (events & EVENT_FAIL) {
+      audio.fail();
+      announce(missionEventText(world, 'mission-failed'));
+    }
+    if (events & EVENT_CRASH) audio.crash();
     if (events & EVENT_MISSION) {
       audio.missionComplete();
       saveProgress();
-      announce(`Job done. $${world.player.money} in your pocket.`);
+      const toast = world.jobToast;
+      announce(toast
+        ? `${toast.title} done. +$${toast.reward}. $${world.player.money} in your pocket.`
+        : `Job done. $${world.player.money} in your pocket.`);
     }
     if (events & EVENT_OVER) endGame();
     audio.update({
       driving: !world.player.onFoot,
       speed: world.player.speed || 0,
       wanted: world.wanted,
+      sliding: world.playerSliding && !world.player.onFoot,
     });
   }
 
