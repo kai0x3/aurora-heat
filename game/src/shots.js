@@ -1,19 +1,22 @@
-// The screenshot scenes behind ?shot=start|race|drive|heli. Each one plays the
-// real rules forward from a fresh world for a fixed number of steps, steered by
-// a small autopilot, so every frame is what a short game really looks like — and
-// the same seed always gives the same frame.
+// The screenshot scenes behind ?shot=cover|taxi|boardwalk|night. Each one
+// plays the real rules forward from a fresh world for a fixed number of
+// steps, steered by a small autopilot, so every frame is what a short game
+// really looks like — and the same seed always gives the same frame.
+// v4 scenes: cover is the densest frame (a five-star chase under the
+// helicopter with the mission marker, traffic and minimap all live), taxi
+// shows a side activity mid-fare, boardwalk puts on-foot combat in the new
+// district, and night shows the lit city with the shops and progression HUD.
 
 import { STEP } from './config.js';
-import { EVENT_OVER } from './world.js';
+import { EVENT_OVER, shootAt } from './world.js';
 import { startMission } from './missions.js';
+import { startActivity } from './activities.js';
 import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 
-/** A minimal input object the autopilot drives instead of a keyboard. */
 function scriptedInput(moveX, moveY) {
-  return { moveX: () => moveX, moveY: () => moveY };
+  return { moveX: () => moveX, moveY: () => moveY, nitro: () => false };
 }
 
-/** Put the player (and the camera) somewhere specific, for staging a scene. */
 function placePlayer(world, x, y) {
   world.player.x = x;
   world.player.y = y;
@@ -21,7 +24,6 @@ function placePlayer(world, x, y) {
   world.camera.y = y;
 }
 
-/** Park a traffic car of the wanted kind right beside the player, ready to steal. */
 function parkCarBesidePlayer(world, type) {
   const car = world.cars.find((c) => c.kind === 'traffic' && c.type === type)
     || world.cars.find((c) => c.kind === 'traffic');
@@ -33,11 +35,6 @@ function parkCarBesidePlayer(world, type) {
   return car;
 }
 
-/**
- * Drive east along the horizontal road the car is on: proportional steering
- * holds the centre line and a level heading, and once up to speed, a short hard
- * steer every so often throws the tail out so the tyres slide and leave marks.
- */
 function eastDriver(world, lineY) {
   const car = world.player.car;
   if (!car) return scriptedInput(0, 0);
@@ -50,55 +47,81 @@ function eastDriver(world, lineY) {
   return scriptedInput(steer, -1);
 }
 
-function driveEast(world, seconds) {
+function driveEast(world, seconds, lineY) {
   const steps = Math.floor(seconds / STEP);
   for (let i = 0; i < steps; i += 1) {
-    const events = world.step(STEP, eastDriver(world, 600), false);
+    const events = world.step(STEP, eastDriver(world, lineY || 600), false);
     if (events & EVENT_OVER) break;
   }
 }
 
-/**
- * Set `world` to the named scene and return the screen to draw over it.
- * start: the title screen over a living city in golden morning light. race:
- * the Harbor Sprint a moment after the first gate — the magenta rival coupe
- * alongside, the standings on the HUD, the next gate off-screen east. drive:
- * behind the wheel of a sports coupe in traffic, sliding through the centre.
- * heli: deep night, five stars, the kingpin run — the helicopter overhead with
- * its spotlight pinned to the car and a roadblock forming ahead.
- */
 export function stageShot(name, world) {
   world.reset();
-  if (name === 'race') {
-    world.time = 30;
-    startMission(world, 4);
-    placePlayer(world, 830, 600);
-    parkCarBesidePlayer(world, 'sports');
-    world.toggleCar();
-    if (world.player.car) world.player.car.speed = 120; // already rolling
-    driveEast(world, 1.5);
-    return { screen: SCREEN_PLAY };
-  }
-  if (name === 'drive') {
-    world.time = 45;
-    placePlayer(world, 300, 600);
-    parkCarBesidePlayer(world, 'sports');
-    world.toggleCar();
-    if (world.player.car) world.player.car.speed = 150; // already rolling
-    driveEast(world, 3.4);
-    return { screen: SCREEN_PLAY };
-  }
-  if (name === 'heli') {
-    // Deep night: two-thirds through the day cycle, the city dark and lit.
-    world.time = 205;
+  if (name === 'cover') {
+    // Evening, the kingpin run: five stars, helicopter up, roadblock ahead,
+    // the mission marker east and traffic all around the chase.
+    world.time = 150;
     startMission(world, 8);
+    world.player.respect = 850;
     placePlayer(world, 500, 600);
-    parkCarBesidePlayer(world, 'sedan');
+    parkCarBesidePlayer(world, 'sports');
     world.toggleCar();
-    driveEast(world, 2.6);
+    driveEast(world, 2.8);
     return { screen: SCREEN_PLAY };
   }
-  // start (and anything unknown): let the city breathe behind the title.
+  if (name === 'taxi') {
+    // A taxi fare in progress: passenger aboard, destination marked, the
+    // orange activity line on the HUD and the fare's taxi under the player.
+    world.time = 40;
+    world.player.respect = 300;
+    placePlayer(world, 1500, 600);
+    const cab = parkCarBesidePlayer(world, 'taxi');
+    world.toggleCar();
+    startActivity(world, 'taxi');
+    if (world.activity) {
+      world.activity.stage = 'deliver';
+      world.activity.drop = { x: 2900, y: 600 };
+      world.activity.target = { x: 1500, y: 600 };
+    }
+    if (cab) cab.speed = 130;
+    driveEast(world, 1.6);
+    return { screen: SCREEN_PLAY };
+  }
+  if (name === 'boardwalk') {
+    // On-foot combat on the Boardwalk: the wheel behind, stalls and joggers
+    // around, two stars of heat — and shots just fired east down the shore
+    // road, bullets in flight and the muzzle flash still lit.
+    world.time = 70;
+    world.player.respect = 550;
+    world.player.weapon = 'pistol';
+    placePlayer(world, 2620, 2080);
+    world.wanted = 2;
+    world.timeSinceCrime = 0;
+    for (let i = 0; i < Math.floor(2.2 / STEP); i += 1) {
+      world.step(STEP, scriptedInput(0.3, 0), false);
+    }
+    world.fireCooldown = 0;
+    shootAt(world, world.player.x + 320, world.player.y - 30);
+    world.step(STEP, scriptedInput(0, 0), false);
+    world.fireCooldown = 0;
+    shootAt(world, world.player.x + 320, world.player.y - 30);
+    world.step(STEP, scriptedInput(0, 0), false);
+    return { screen: SCREEN_PLAY };
+  }
+  if (name === 'night') {
+    // Night over downtown: lit windows, lamp pools, headlight cones, the
+    // weapon shop ring in view and the Respect HUD reading level 5.
+    world.time = 215;
+    world.player.respect = 850;
+    world.player.money = 1250;
+    placePlayer(world, 1000, 1000);
+    parkCarBesidePlayer(world, 'bike');
+    for (let i = 0; i < Math.floor(2 / STEP); i += 1) {
+      world.step(STEP, scriptedInput(0, 0), true);
+    }
+    return { screen: SCREEN_PLAY };
+  }
+  // start (and anything unknown): the title over a living city.
   world.time = 24;
   for (let i = 0; i < Math.floor(4 / STEP); i += 1) {
     world.step(STEP, scriptedInput(0, 0), true);

@@ -1,19 +1,25 @@
-// Drawing only: the world's state and the current screen in, pixels out. The
-// canvas fills the window (at up to twice the device pixel ratio, so lines stay
-// crisp), the camera follows the player, and only what the camera can see is
-// painted. Port Aurora lives through a full day — golden light, dusk, then a
-// blue night of lit windows, lamp glow and headlight cones — over five minutes.
-// At five stars the police helicopter joins the painting: a pool of spotlight
-// on the ground and the dark shape that carries it. Flat shapes, canvas text
-// for the HUD and panels, and a live minimap of the whole city in the corner.
+// Drawing only: the world's state and the current screen in, pixels out.
+// v4 paints the Boardwalk landmarks (the Aurora Wheel turning slowly, stalls,
+// port cranes), shop and activity markers, bikes, the Respect bar, the held
+// weapon, armour, hit markers, a muzzle flash and a screen shake that kicks
+// on hard hits — on top of the v3 day cycle, helicopter spotlight, minimap
+// and HUD. The canvas fills the window at up to twice the device pixel ratio
+// and only what the camera can see is painted. Two v4 performance rules keep
+// it at 60 fps in software rendering too: HUD text uses a hard 1px offset
+// shadow (a blurred shadow is the single most expensive canvas text effect),
+// and the big ground rings are culled when they are off-camera.
 
 import {
   BEACH_Y, CAR_LENGTH, CAR_MAX_HP, CAR_WIDTH, COLORS, DAY_CYCLE_SECONDS,
-  HELI_SPOT_RADIUS, PLAYER_HEALTH_MAX, PLAYER_RADIUS, REPAIR_TICK_COST,
-  ROAD_WIDTH, SAFEHOUSE, WATER_Y, WORLD_HEIGHT, WORLD_WIDTH,
+  GARAGE, HELI_SPOT_RADIUS, PLAYER_ARMOUR_MAX, PLAYER_HEALTH_MAX, PLAYER_RADIUS,
+  REPAIR_TICK_COST, ROAD_WIDTH, SAFEHOUSE, SAFEHOUSE2, WATER_Y, WEAPON_SHOP,
+  WEAPONS, WORLD_HEIGHT, WORLD_WIDTH,
 } from './config.js';
+import { districtAt } from './city.js';
 import { MISSION_COUNT, missionObjectiveText, missionTarget } from './missions.js';
-import { playerAtSafehouse, sirenColor } from './police.js';
+import { ACTIVITY_SPOTS, activityTarget, activityText } from './activities.js';
+import { levelForRespect, levelProgress } from './progression.js';
+import { playerAtAnySafehouse, playerAtSafehouse2, sirenColor } from './police.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -24,14 +30,12 @@ const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 const MINIMAP = { width: 210, height: 150, margin: 16 };
 const STAR = '★';
 
-/** A small deterministic hash, so a window is lit (or not) the same way every frame. */
 function hash2(a, b) {
   let h = (Math.floor(a) * 374761393 + Math.floor(b) * 668265263) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-/** Where the day stands: how dark the night is (0–1) and how warm the low sun burns (0–1). */
 function dayInfo(world) {
   const t = (world.time % DAY_CYCLE_SECONDS) / DAY_CYCLE_SECONDS;
   let dark = 0;
@@ -62,7 +66,6 @@ export function createRenderer(canvas) {
     view.height = window.innerHeight;
     canvas.width = Math.round(view.width * ratio);
     canvas.height = Math.round(view.height * ratio);
-    // The cinema vignette is cached per size, never rebuilt per frame.
     const cx = view.width / 2;
     const cy = view.height / 2;
     vignette = context.createRadialGradient(
@@ -71,7 +74,6 @@ export function createRenderer(canvas) {
     );
     vignette.addColorStop(0, 'rgba(0,0,0,0)');
     vignette.addColorStop(1, 'rgba(0,0,0,0.30)');
-    // The hurt vignette likewise: clear in the middle, blood at the edges.
     hurtVignette = context.createRadialGradient(
       cx, cy, Math.min(view.width, view.height) * 0.42,
       cx, cy, Math.max(view.width, view.height) * 0.72,
@@ -103,7 +105,7 @@ export function createRenderer(canvas) {
     context.textAlign = align || 'left';
     context.textBaseline = baseline || 'alphabetic';
     context.shadowColor = 'rgba(0,0,0,0.45)';
-    context.shadowBlur = 4;
+    context.shadowBlur = 0;
     context.shadowOffsetY = 1;
     context.fillText(value, x, y);
     context.shadowBlur = 0;
@@ -117,8 +119,68 @@ export function createRenderer(canvas) {
     context.fill();
   }
 
+  function drawLandmarks(city, bounds, time) {
+    for (const mark of city.landmarks || []) {
+      if (mark.x < bounds.left - 120 || mark.x > bounds.right + 120 || mark.y < bounds.top - 120 || mark.y > bounds.bottom + 120) continue;
+      if (mark.kind === 'wheel') {
+        // The Aurora Wheel: a turning ring of cabins over the Boardwalk.
+        context.save();
+        context.translate(mark.x, mark.y);
+        context.strokeStyle = '#e8e3d8';
+        context.lineWidth = 5;
+        context.beginPath();
+        context.moveTo(-34, 66);
+        context.lineTo(0, 0);
+        context.lineTo(34, 66);
+        context.stroke();
+        const rot = time * 0.12;
+        context.strokeStyle = '#ffd23f';
+        context.lineWidth = 4;
+        context.beginPath();
+        context.arc(0, 0, mark.r, 0, Math.PI * 2);
+        context.stroke();
+        for (let i = 0; i < 8; i += 1) {
+          const a = rot + (i * Math.PI) / 4;
+          const cx = Math.cos(a) * mark.r;
+          const cy = Math.sin(a) * mark.r;
+          context.strokeStyle = 'rgba(232,227,216,0.7)';
+          context.lineWidth = 2;
+          context.beginPath();
+          context.moveTo(0, 0);
+          context.lineTo(cx, cy);
+          context.stroke();
+          context.fillStyle = ['#ff5340', '#37c8e0', '#7ab648', '#e0347c'][i % 4];
+          context.beginPath();
+          context.arc(cx, cy + 5, 6, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.restore();
+        text('AURORA WHEEL', mark.x, mark.y + mark.r + 26, 13, 'rgba(255,255,255,0.9)', 'center', 'top');
+      } else if (mark.kind === 'stall') {
+        context.fillStyle = '#a34a3d';
+        context.fillRect(mark.x - 26, mark.y - 12, 52, 24);
+        context.fillStyle = '#e8e3d8';
+        for (let i = 0; i < 4; i += 1) context.fillRect(mark.x - 26 + i * 13, mark.y - 18, 7, 8);
+      } else if (mark.kind === 'crane') {
+        context.strokeStyle = '#5f7a8a';
+        context.lineWidth = 7;
+        context.beginPath();
+        context.moveTo(mark.x, mark.y + 60);
+        context.lineTo(mark.x, mark.y - 60);
+        context.lineTo(mark.x + 88, mark.y - 60);
+        context.stroke();
+        context.lineWidth = 3;
+        context.beginPath();
+        context.moveTo(mark.x + 66, mark.y - 60);
+        context.lineTo(mark.x + 66, mark.y - 18);
+        context.stroke();
+        context.fillStyle = '#c9a13d';
+        context.fillRect(mark.x + 52, mark.y - 18, 28, 20);
+      }
+    }
+  }
+
   function drawCity(city, bounds, dark, time) {
-    // Ground: grass everywhere, mowed in a patchwork, then the bay and the beach.
     context.fillStyle = COLORS.grass;
     context.fillRect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
     for (let gx = Math.floor(bounds.left / 200) * 200; gx < bounds.right; gx += 200) {
@@ -127,11 +189,17 @@ export function createRenderer(canvas) {
         context.fillRect(gx, gy, 200, 200);
       }
     }
+    // The Boardwalk promenade: pale boards running the length of the shore.
+    context.fillStyle = '#c8a878';
+    context.fillRect(bounds.left, 2060, bounds.right - bounds.left, 130);
+    context.fillStyle = 'rgba(0,0,0,0.10)';
+    for (let x = Math.floor(bounds.left / 46) * 46; x < bounds.right; x += 46) {
+      context.fillRect(x, 2060, 3, 130);
+    }
     context.fillStyle = COLORS.sand;
     context.fillRect(bounds.left, BEACH_Y, bounds.right - bounds.left, WATER_Y - BEACH_Y);
     context.fillStyle = COLORS.water;
     context.fillRect(bounds.left, WATER_Y, bounds.right - bounds.left, bounds.bottom - WATER_Y);
-    // Two shimmer rows on the bay, drifting against each other.
     context.fillStyle = 'rgba(255,255,255,0.20)';
     const driftA = (time * 14) % 260;
     const driftB = 130 - ((time * 9) % 260);
@@ -141,7 +209,6 @@ export function createRenderer(canvas) {
     for (let x = Math.floor(bounds.left / 260) * 260 - 260 + driftB; x < bounds.right; x += 260) {
       context.fillRect(x, WATER_Y + 80, 64, 3);
     }
-    // Palms along the beach.
     for (let x = 60; x < WORLD_WIDTH; x += 165) {
       const px = x + hash2(x, 7) * 50;
       if (px < bounds.left - 40 || px > bounds.right + 40) continue;
@@ -164,7 +231,6 @@ export function createRenderer(canvas) {
         context.stroke();
       }
     }
-    // Parks: darker grass, trees, a path.
     for (const park of city.parks) {
       if (park.x + park.width < bounds.left || park.x > bounds.right || park.y + park.height < bounds.top || park.y > bounds.bottom) continue;
       context.fillStyle = COLORS.parkGrass;
@@ -182,7 +248,6 @@ export function createRenderer(canvas) {
         context.fill();
       }
     }
-    // Plazas: pale paving with a fountain dot.
     for (const plaza of city.plazas) {
       if (plaza.x + plaza.width < bounds.left || plaza.x > bounds.right || plaza.y + plaza.height < bounds.top || plaza.y > bounds.bottom) continue;
       context.fillStyle = '#cfc8b8';
@@ -192,7 +257,6 @@ export function createRenderer(canvas) {
       context.arc(plaza.x + plaza.width / 2, plaza.y + plaza.height / 2, 22, 0, Math.PI * 2);
       context.fill();
     }
-    // Roads: asphalt bands with sidewalks and dashed centre lines.
     for (const rx of city.roadXs) {
       context.fillStyle = COLORS.sidewalk;
       context.fillRect(rx - ROAD_WIDTH / 2 - 10, bounds.top, ROAD_WIDTH + 20, bounds.bottom - bounds.top);
@@ -216,7 +280,6 @@ export function createRenderer(canvas) {
         context.fillRect(x, ry - 3, 32, 6);
       }
     }
-    // Crosswalks at the intersections in view.
     context.fillStyle = 'rgba(255,255,255,0.75)';
     for (const rx of city.roadXs) {
       for (const ry of city.roadYs) {
@@ -227,9 +290,6 @@ export function createRenderer(canvas) {
         }
       }
     }
-    // Buildings: an edged roof with a sun side and a shade side, a parapet, air
-    // conditioners, and windows hashed per pane — glass by day, a lit patchwork
-    // as the night comes down.
     for (const b of city.buildings) {
       if (b.x + b.width < bounds.left || b.x > bounds.right || b.y + b.height < bounds.top || b.y > bounds.bottom) continue;
       context.fillStyle = COLORS.buildingEdge;
@@ -273,40 +333,61 @@ export function createRenderer(canvas) {
         }
       }
     }
-    // Street names along the waterfront, for the map's flavour.
+    drawLandmarks(city, bounds, time);
     context.font = `bold 22px ${FONT}`;
     context.fillStyle = 'rgba(255,255,255,0.85)';
     context.textAlign = 'left';
     context.textBaseline = 'alphabetic';
     context.fillText('AURORA BAY', 90, WATER_Y - 24);
     context.fillText('MARINA DISTRICT', 2350, 190);
+    context.fillText('THE BOARDWALK', 1980, 2044);
   }
 
-  function drawSafehouseRing(world) {
-    const pulse = 1 + Math.sin(world.time * 2.4) * 0.02;
-    context.fillStyle = 'rgba(55,224,139,0.05)';
+  function ringVisible(x, y, radius, bounds) {
+    return bounds && x + radius >= bounds.left && x - radius <= bounds.right
+      && y + radius >= bounds.top && y - radius <= bounds.bottom;
+  }
+
+  function drawRing(x, y, radius, color, label, time) {
+    const pulse = 1 + Math.sin(time * 2.4) * 0.02;
+    context.fillStyle = color.replace('A)', '0.05)');
     context.beginPath();
-    context.arc(SAFEHOUSE.x, SAFEHOUSE.y, SAFEHOUSE.radius * pulse, 0, Math.PI * 2);
+    context.arc(x, y, radius * pulse, 0, Math.PI * 2);
     context.fill();
-    context.strokeStyle = 'rgba(55,224,139,0.75)';
+    context.strokeStyle = color.replace('A)', '0.75)');
     context.lineWidth = 3;
     context.setLineDash([16, 10]);
     context.beginPath();
-    context.arc(SAFEHOUSE.x, SAFEHOUSE.y, SAFEHOUSE.radius * pulse, 0, Math.PI * 2);
+    context.arc(x, y, radius * pulse, 0, Math.PI * 2);
     context.stroke();
     context.setLineDash([]);
-    context.font = `bold 13px ${FONT}`;
-    context.fillStyle = 'rgba(55,224,139,0.9)';
-    context.textAlign = 'center';
-    context.textBaseline = 'alphabetic';
-    context.fillText('SOL PLAZA SAFEHOUSE', SAFEHOUSE.x, SAFEHOUSE.y - SAFEHOUSE.radius - 12);
+    text(label, x, y - radius - 12, 13, color.replace('A)', '0.9)'), 'center', 'bottom');
   }
 
-  /**
-   * The helicopter's light: a cone falling from the airframe to a bright pool
-   * on the ground around the player. By day it is a pale suggestion; at night
-   * it is a searchlight you can read by.
-   */
+  function drawSafehouseRing(world, bounds) {
+    if (ringVisible(SAFEHOUSE.x, SAFEHOUSE.y, SAFEHOUSE.radius, bounds)) {
+      drawRing(SAFEHOUSE.x, SAFEHOUSE.y, SAFEHOUSE.radius, 'rgba(55,224,139,A)', 'SOL PLAZA SAFEHOUSE', world.time);
+    }
+    const unlocked = levelForRespect(world.player.respect) >= 5;
+    if (ringVisible(SAFEHOUSE2.x, SAFEHOUSE2.y, SAFEHOUSE2.radius, bounds)) {
+      drawRing(
+        SAFEHOUSE2.x, SAFEHOUSE2.y, SAFEHOUSE2.radius,
+        unlocked ? 'rgba(55,224,139,A)' : 'rgba(139,147,163,A)',
+        unlocked ? 'BOARDWALK SAFEHOUSE' : 'BOARDWALK SAFEHOUSE — RESPECT 5',
+        world.time,
+      );
+    }
+  }
+
+  function drawShopRings(world, bounds) {
+    if (ringVisible(WEAPON_SHOP.x, WEAPON_SHOP.y, WEAPON_SHOP.radius, bounds)) {
+      drawRing(WEAPON_SHOP.x, WEAPON_SHOP.y, WEAPON_SHOP.radius, 'rgba(255,140,66,A)', 'AURORA ARMS — F TO BUY', world.time);
+    }
+    if (ringVisible(GARAGE.x, GARAGE.y, GARAGE.radius, bounds)) {
+      drawRing(GARAGE.x, GARAGE.y, GARAGE.radius, 'rgba(55,200,224,A)', 'TORQUE & TONE GARAGE — F TO BUY', world.time);
+    }
+  }
+
   function drawHeliSpot(world, dark) {
     const heli = world.heli;
     if (!heli || !heli.active) return;
@@ -332,22 +413,18 @@ export function createRenderer(canvas) {
     context.fill();
   }
 
-  /** The helicopter itself: a dark airframe, a spinning blur of rotor, a blinking beacon. */
   function drawHelicopter(world) {
     const heli = world.heli;
     if (!heli || !heli.active) return;
-    // Its shadow, thrown long on the ground it circles.
     context.fillStyle = 'rgba(0,0,0,0.20)';
     context.beginPath();
     context.ellipse(heli.x + 30, heli.y + 40, 30, 13, 0.4, 0, Math.PI * 2);
     context.fill();
     context.save();
     context.translate(heli.x, heli.y);
-    // Tail boom and fin.
     context.fillStyle = '#14161c';
     context.fillRect(-58, -3.5, 36, 7);
     context.fillRect(-60, -10, 6, 16);
-    // Body and cockpit glass.
     context.beginPath();
     context.roundRect(-26, -11, 54, 22, 10);
     context.fill();
@@ -355,7 +432,6 @@ export function createRenderer(canvas) {
     context.beginPath();
     context.roundRect(8, -8, 16, 16, 6);
     context.fill();
-    // Skids.
     context.strokeStyle = '#0c0d10';
     context.lineWidth = 2.5;
     context.beginPath();
@@ -366,7 +442,6 @@ export function createRenderer(canvas) {
     context.moveTo(14, 11);
     context.lineTo(14, 15);
     context.stroke();
-    // The rotor: a long line whose reach breathes with the spin phase.
     const reach = 40 * (0.35 + 0.65 * Math.abs(Math.cos(heli.rotor)));
     context.strokeStyle = 'rgba(12,13,16,0.85)';
     context.lineWidth = 3;
@@ -374,7 +449,6 @@ export function createRenderer(canvas) {
     context.moveTo(-reach, -13);
     context.lineTo(reach, -13);
     context.stroke();
-    // Beacon.
     if (Math.floor(world.time * 2) % 2 === 0) {
       context.fillStyle = '#ff2b2b';
       context.beginPath();
@@ -390,55 +464,76 @@ export function createRenderer(canvas) {
     context.save();
     context.translate(car.x, car.y);
     context.rotate(car.angle);
-    // A soft shadow pooled under the body.
     context.fillStyle = 'rgba(0,0,0,0.28)';
     context.beginPath();
     context.ellipse(3, 5, len / 2 + 2, wid / 2 + 2, 0, 0, Math.PI * 2);
     context.fill();
-    context.fillStyle = car.color;
-    context.beginPath();
-    context.roundRect(-len / 2, -wid / 2, len, wid, 7);
-    context.fill();
-    // Paint sheen along the top side.
-    context.fillStyle = 'rgba(255,255,255,0.13)';
-    context.beginPath();
-    context.roundRect(-len / 2 + 3, -wid / 2 + 2, len - 6, wid * 0.38, 5);
-    context.fill();
-    // Wheels at the corners.
-    context.fillStyle = '#17181c';
-    for (const wx of [len / 2 - 15, -len / 2 + 4]) {
-      context.fillRect(wx, -wid / 2 - 1.5, 11, 4.5);
-      context.fillRect(wx, wid / 2 - 3, 11, 4.5);
-    }
-    if (car.type === 'truck') {
-      // The cargo box rides behind the cab.
-      context.fillStyle = 'rgba(255,255,255,0.20)';
-      context.beginPath();
-      context.roundRect(-len / 2 + 2, -wid / 2 + 2, len * 0.6, wid - 4, 3);
-      context.fill();
-    }
-    // Windshield and rear window.
-    context.fillStyle = '#1d2b3a';
-    context.fillRect(len * 0.08, -wid / 2 + 4, 10, wid - 8);
-    context.fillRect(-len * 0.32, -wid / 2 + 4, 8, wid - 8);
-    if (car.type === 'taxi') {
-      context.fillStyle = '#fff7cc';
-      context.fillRect(-4, -3, 8, 6);
-    }
-    if (car.rival) {
-      // The rival's chequered band: you know that coupe when you see it.
-      context.fillStyle = '#f5f2ea';
-      context.fillRect(-7, -wid / 2 + 3, 14, wid - 6);
+    if (car.type === 'bike') {
+      // The bike: a slim frame, two wheels in line, a rider blob.
       context.fillStyle = '#17181c';
-      for (let i = 0; i < 3; i += 1) {
-        context.fillRect(-7, -wid / 2 + 3 + i * ((wid - 6) / 3), 7, (wid - 6) / 6);
-        context.fillRect(0, -wid / 2 + 3 + (i + 0.5) * ((wid - 6) / 3), 7, (wid - 6) / 6);
+      context.fillRect(-len / 2, -2.5, 10, 5);
+      context.fillRect(len / 2 - 10, -2.5, 10, 5);
+      context.fillStyle = car.color;
+      context.beginPath();
+      context.roundRect(-len / 2 + 7, -wid / 2, len - 16, wid, 5);
+      context.fill();
+      context.fillStyle = '#2e2a28';
+      context.beginPath();
+      context.arc(1, 0, 6.5, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = '#ffe9a3';
+      context.fillRect(len / 2 - 3, -2, 3, 4);
+    } else {
+      context.fillStyle = car.color;
+      context.beginPath();
+      context.roundRect(-len / 2, -wid / 2, len, wid, 7);
+      context.fill();
+      context.fillStyle = 'rgba(255,255,255,0.13)';
+      context.beginPath();
+      context.roundRect(-len / 2 + 3, -wid / 2 + 2, len - 6, wid * 0.38, 5);
+      context.fill();
+      context.fillStyle = '#17181c';
+      for (const wx of [len / 2 - 15, -len / 2 + 4]) {
+        context.fillRect(wx, -wid / 2 - 1.5, 11, 4.5);
+        context.fillRect(wx, wid / 2 - 3, 11, 4.5);
       }
+      if (car.type === 'truck') {
+        context.fillStyle = 'rgba(255,255,255,0.20)';
+        context.beginPath();
+        context.roundRect(-len / 2 + 2, -wid / 2 + 2, len * 0.6, wid - 4, 3);
+        context.fill();
+      }
+      context.fillStyle = '#1d2b3a';
+      context.fillRect(len * 0.08, -wid / 2 + 4, 10, wid - 8);
+      context.fillRect(-len * 0.32, -wid / 2 + 4, 8, wid - 8);
+      if (car.type === 'taxi') {
+        context.fillStyle = '#fff7cc';
+        context.fillRect(-4, -3, 8, 6);
+        context.fillStyle = '#17181c';
+        context.font = `bold 7px ${FONT}`;
+        context.textAlign = 'center';
+        context.fillText('TAXI', 0, -wid / 2 + 10);
+      }
+      if (car.armoured) {
+        context.strokeStyle = 'rgba(200,210,225,0.8)';
+        context.lineWidth = 2;
+        context.beginPath();
+        context.roundRect(-len / 2 + 2, -wid / 2 + 2, len - 4, wid - 4, 5);
+        context.stroke();
+      }
+      if (car.rival) {
+        context.fillStyle = '#f5f2ea';
+        context.fillRect(-7, -wid / 2 + 3, 14, wid - 6);
+        context.fillStyle = '#17181c';
+        for (let i = 0; i < 3; i += 1) {
+          context.fillRect(-7, -wid / 2 + 3 + i * ((wid - 6) / 3), 7, (wid - 6) / 6);
+          context.fillRect(0, -wid / 2 + 3 + (i + 0.5) * ((wid - 6) / 3), 7, (wid - 6) / 6);
+        }
+      }
+      context.fillStyle = '#ffe9a3';
+      context.fillRect(len / 2 - 3, -wid / 2 + 2, 3, 6);
+      context.fillRect(len / 2 - 3, wid / 2 - 8, 3, 6);
     }
-    // Headlights.
-    context.fillStyle = '#ffe9a3';
-    context.fillRect(len / 2 - 3, -wid / 2 + 2, 3, 6);
-    context.fillRect(len / 2 - 3, wid / 2 - 8, 3, 6);
     if (car.kind === 'police') {
       context.fillStyle = sirenColor(car);
       context.beginPath();
@@ -449,6 +544,14 @@ export function createRenderer(canvas) {
       context.font = `bold 9px ${FONT}`;
       context.textAlign = 'center';
       context.fillText('PD', 0, 3);
+    }
+    if (car.criminal) {
+      // The vigilante target wears a pulsing red ring.
+      context.strokeStyle = '#ff2b2b';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(0, 0, len / 2 + 10, 0, Math.PI * 2);
+      context.stroke();
     }
     if (car.driver === 'player') {
       context.strokeStyle = '#ffd23f';
@@ -461,7 +564,9 @@ export function createRenderer(canvas) {
   }
 
   function drawPedestrian(ped, time) {
-    const bob = ped.state === 'panic' ? Math.sin(time * 18) * 2 : Math.sin(time * 8) * 1;
+    const bob = ped.state === 'panic' ? Math.sin(time * 18) * 2
+      : ped.role === 'jogger' ? Math.sin(time * 13) * 2.4
+        : Math.sin(time * 8) * 1;
     context.fillStyle = 'rgba(0,0,0,0.25)';
     context.beginPath();
     context.ellipse(ped.x, ped.y + 9, 8, 4, 0, 0, Math.PI * 2);
@@ -475,9 +580,15 @@ export function createRenderer(canvas) {
     context.arc(ped.x + Math.cos(ped.angle) * 4, ped.y + Math.sin(ped.angle) * 4 + bob, 4, 0, Math.PI * 2);
     context.fill();
     if (ped.state === 'watch') {
-      // A watcher stands out the way people do: still, with a phone up.
       context.fillStyle = '#eef1f5';
       context.fillRect(ped.x + Math.cos(ped.angle) * 9 - 2, ped.y + Math.sin(ped.angle) * 9 - 3 + bob, 4, 6);
+    }
+    if (ped.role === 'jogger') {
+      context.strokeStyle = '#fff';
+      context.lineWidth = 2;
+      context.beginPath();
+      context.arc(ped.x, ped.y + bob, 9.5, 0, Math.PI * 2);
+      context.stroke();
     }
   }
 
@@ -497,7 +608,6 @@ export function createRenderer(canvas) {
     context.beginPath();
     context.arc(player.x, player.y, PLAYER_RADIUS, 0, Math.PI * 2);
     context.stroke();
-    // Facing tick: where the player looks (and shoots).
     context.strokeStyle = '#2e2a28';
     context.lineWidth = 3;
     context.beginPath();
@@ -508,30 +618,38 @@ export function createRenderer(canvas) {
 
   function drawMissionMarker(world) {
     const target = missionTarget(world);
-    if (!target) return;
-    const pulse = 1 + Math.sin(world.time * 4) * 0.15;
-    context.strokeStyle = '#37e08b';
+    if (target) drawMarkerAt(target.x, target.y, '#37e08b', world.time);
+    const act = activityTarget(world);
+    if (act) drawMarkerAt(act.x, act.y, '#ff8c42', world.time);
+  }
+
+  function drawMarkerAt(x, y, color, time) {
+    const pulse = 1 + Math.sin(time * 4) * 0.15;
+    context.strokeStyle = color;
     context.lineWidth = 3;
     context.beginPath();
-    context.arc(target.x, target.y, 34 * pulse, 0, Math.PI * 2);
+    context.arc(x, y, 34 * pulse, 0, Math.PI * 2);
     context.stroke();
-    context.fillStyle = '#37e08b';
+    context.fillStyle = color;
     context.beginPath();
-    context.arc(target.x, target.y, 8, 0, Math.PI * 2);
+    context.arc(x, y, 8, 0, Math.PI * 2);
     context.fill();
-    // A beacon column so the marker reads from far away.
-    const gradient = context.createLinearGradient(target.x, target.y - 130, target.x, target.y);
+    const gradient = context.createLinearGradient(x, y - 130, x, y);
     gradient.addColorStop(0, 'rgba(55,224,139,0)');
     gradient.addColorStop(1, 'rgba(55,224,139,0.45)');
     context.fillStyle = gradient;
-    context.fillRect(target.x - 6, target.y - 130, 12, 130);
+    context.fillRect(x - 6, y - 130, 12, 130);
   }
 
   function drawWorld(world, screen) {
     const camX = Math.max(view.width / 2, Math.min(WORLD_WIDTH - view.width / 2, world.camera.x));
     const camY = Math.max(view.height / 2, Math.min(WORLD_HEIGHT - view.height / 2, world.camera.y));
-    const ox = view.width / 2 - camX;
-    const oy = view.height / 2 - camY;
+    // Screen shake: a decaying offset, deterministic from world time.
+    const shake = world.shake || 0;
+    const shX = shake > 0 ? Math.sin(world.time * 91) * shake : 0;
+    const shY = shake > 0 ? Math.cos(world.time * 113) * shake : 0;
+    const ox = view.width / 2 - camX + shX;
+    const oy = view.height / 2 - camY + shY;
     const bounds = {
       left: camX - view.width / 2 - 90,
       right: camX + view.width / 2 + 90,
@@ -543,7 +661,8 @@ export function createRenderer(canvas) {
     context.save();
     context.translate(ox, oy);
     drawCity(world.city, bounds, day.dark, world.time);
-    drawSafehouseRing(world);
+    drawSafehouseRing(world, bounds);
+    drawShopRings(world, bounds);
     for (const mark of world.skids) {
       context.save();
       context.translate(mark.x, mark.y);
@@ -558,7 +677,7 @@ export function createRenderer(canvas) {
     for (const pickup of world.pickups) {
       if (pickup.taken) continue;
       const bobY = Math.sin(pickup.bob) * 3;
-      context.fillStyle = '#37e08b';
+      context.fillStyle = pickup.kind === 'armour' ? '#37c8e0' : '#37e08b';
       context.beginPath();
       context.arc(pickup.x, pickup.y + bobY, 11, 0, Math.PI * 2);
       context.fill();
@@ -566,7 +685,7 @@ export function createRenderer(canvas) {
       context.font = `bold 13px ${FONT}`;
       context.textAlign = 'center';
       context.textBaseline = 'middle';
-      context.fillText('$', pickup.x, pickup.y + bobY);
+      context.fillText(pickup.kind === 'armour' ? '+' : '$', pickup.x, pickup.y + bobY);
     }
     drawMissionMarker(world);
     for (const ped of world.peds) {
@@ -576,6 +695,18 @@ export function createRenderer(canvas) {
       if (inView(car.x, car.y, 80)) drawCar(car);
     }
     if (world.player.onFoot) drawPlayer(world.player, world.time);
+    // Muzzle flash light at the player just after a shot.
+    if (world.player.onFoot && world.time - world.muzzleAt < 0.07) {
+      const fx = world.player.x + Math.cos(world.player.angle) * 26;
+      const fy = world.player.y + Math.sin(world.player.angle) * 26;
+      const flash = context.createRadialGradient(fx, fy, 2, fx, fy, 44);
+      flash.addColorStop(0, 'rgba(255,220,120,0.85)');
+      flash.addColorStop(1, 'rgba(255,220,120,0)');
+      context.fillStyle = flash;
+      context.beginPath();
+      context.arc(fx, fy, 44, 0, Math.PI * 2);
+      context.fill();
+    }
     for (const b of world.bullets) {
       context.fillStyle = '#ffd23f';
       context.beginPath();
@@ -592,7 +723,6 @@ export function createRenderer(canvas) {
     context.globalAlpha = 1;
     drawHelicopter(world);
     context.restore();
-    // The light itself: a warm wash at the day's edges, blue dark over the night.
     if (day.warm > 0.02) {
       context.fillStyle = `rgba(255,120,30,${(day.warm * 0.10).toFixed(3)})`;
       context.fillRect(0, 0, view.width, view.height);
@@ -600,7 +730,6 @@ export function createRenderer(canvas) {
     if (day.dark > 0.02) {
       context.fillStyle = `rgba(8,12,38,${(day.dark * 0.42).toFixed(3)})`;
       context.fillRect(0, 0, view.width, view.height);
-      // What the night lights up: lamp pools at the intersections, headlight cones.
       context.save();
       context.translate(ox, oy);
       const sprite = lampGlow();
@@ -634,13 +763,25 @@ export function createRenderer(canvas) {
       context.fillStyle = vignette;
       context.fillRect(0, 0, view.width, view.height);
     }
-    // A fresh hit still stings: the edges of the screen flush red, then fade.
     const sinceHit = world.time - (world.damageFlashAt ?? -99);
     if (hurtVignette && sinceHit >= 0 && sinceHit < 0.45) {
       context.globalAlpha = (1 - sinceHit / 0.45) * 0.85;
       context.fillStyle = hurtVignette;
       context.fillRect(0, 0, view.width, view.height);
       context.globalAlpha = 1;
+    }
+    // Hit marker: a small X beside the player right after a hit lands.
+    if (world.time - world.hitmarkAt < 0.18 && screen === SCREEN_PLAY) {
+      const hx = view.width / 2 + 26;
+      const hy = view.height / 2 - 26;
+      context.strokeStyle = '#fff';
+      context.lineWidth = 3;
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        context.beginPath();
+        context.moveTo(hx + dx * 4, hy + dy * 4);
+        context.lineTo(hx + dx * 11, hy + dy * 11);
+        context.stroke();
+      }
     }
     return { ox, oy };
   }
@@ -670,12 +811,25 @@ export function createRenderer(canvas) {
     context.fillStyle = '#3d3a38';
     for (const rx of world.city.roadXs) context.fillRect(x + rx * sx - 2, y, 4, MINIMAP.height);
     for (const ry of world.city.roadYs) context.fillRect(x, y + ry * sy - 2, MINIMAP.width, 4);
-    // The safehouse, a small teal ring.
     context.strokeStyle = '#37e08b';
     context.lineWidth = 1.5;
     context.beginPath();
     context.arc(x + SAFEHOUSE.x * sx, y + SAFEHOUSE.y * sy, 4, 0, Math.PI * 2);
     context.stroke();
+    context.beginPath();
+    context.arc(x + SAFEHOUSE2.x * sx, y + SAFEHOUSE2.y * sy, 4, 0, Math.PI * 2);
+    context.stroke();
+    // Shops: orange arms, cyan garage.
+    context.fillStyle = '#ff8c42';
+    context.fillRect(x + WEAPON_SHOP.x * sx - 3, y + WEAPON_SHOP.y * sy - 3, 6, 6);
+    context.fillStyle = '#37c8e0';
+    context.fillRect(x + GARAGE.x * sx - 3, y + GARAGE.y * sy - 3, 6, 6);
+    // Idle activity spots in orange outline.
+    context.strokeStyle = '#ff8c42';
+    for (const kind of Object.keys(ACTIVITY_SPOTS)) {
+      const spot = ACTIVITY_SPOTS[kind];
+      context.strokeRect(x + spot.x * sx - 3, y + spot.y * sy - 3, 6, 6);
+    }
     const target = missionTarget(world);
     if (target) {
       context.fillStyle = '#37e08b';
@@ -683,8 +837,15 @@ export function createRenderer(canvas) {
       context.arc(x + target.x * sx, y + target.y * sy, 5, 0, Math.PI * 2);
       context.fill();
     }
+    const act = activityTarget(world);
+    if (act) {
+      context.fillStyle = '#ff8c42';
+      context.beginPath();
+      context.arc(x + act.x * sx, y + act.y * sy, 5, 0, Math.PI * 2);
+      context.fill();
+    }
     for (const car of world.cars) {
-      context.fillStyle = car.kind === 'police' ? '#ff2b2b' : '#e8d44f';
+      context.fillStyle = car.kind === 'police' ? '#ff2b2b' : (car.criminal ? '#ff2b2b' : '#e8d44f');
       context.fillRect(x + car.x * sx - 2, y + car.y * sy - 2, 4, 4);
     }
     if (world.rival && world.rival.car) {
@@ -697,7 +858,6 @@ export function createRenderer(canvas) {
       context.arc(x + world.heli.x * sx, y + world.heli.y * sy, 3, 0, Math.PI * 2);
       context.fill();
     }
-    // The player, big and unmissable.
     context.fillStyle = '#fff';
     context.beginPath();
     context.arc(x + world.player.x * sx, y + world.player.y * sy, 5, 0, Math.PI * 2);
@@ -708,7 +868,6 @@ export function createRenderer(canvas) {
     context.arc(x + world.player.x * sx, y + world.player.y * sy, 7, 0, Math.PI * 2);
     context.stroke();
     context.restore();
-    // Viewport rectangle on the minimap.
     const camX = Math.max(view.width / 2, Math.min(WORLD_WIDTH - view.width / 2, world.camera.x));
     const camY = Math.max(view.height / 2, Math.min(WORLD_HEIGHT - view.height / 2, world.camera.y));
     context.strokeStyle = 'rgba(255,255,255,0.7)';
@@ -721,13 +880,8 @@ export function createRenderer(canvas) {
     );
   }
 
-  /**
-   * When the mission target is off-screen, a green arrow rides the edge of the
-   * screen pointing at it, with the distance underneath — so the next gate is
-   * never a guessing game, even across the whole city.
-   */
   function drawObjectiveArrow(world) {
-    const target = missionTarget(world);
+    const target = missionTarget(world) || activityTarget(world);
     if (!target) return;
     const camX = Math.max(view.width / 2, Math.min(WORLD_WIDTH - view.width / 2, world.camera.x));
     const camY = Math.max(view.height / 2, Math.min(WORLD_HEIGHT - view.height / 2, world.camera.y));
@@ -750,7 +904,7 @@ export function createRenderer(canvas) {
     context.translate(ax, ay);
     context.rotate(angle);
     context.scale(pulse, pulse);
-    context.fillStyle = '#37e08b';
+    context.fillStyle = missionTarget(world) ? '#37e08b' : '#ff8c42';
     context.beginPath();
     context.moveTo(17, 0);
     context.lineTo(-11, -10);
@@ -765,21 +919,37 @@ export function createRenderer(canvas) {
 
   function drawHud(world, save) {
     const pad = 16;
-    // Money and score, top left.
-    panel(pad - 6, pad - 6, 262, 64);
+    panel(pad - 6, pad - 6, 300, 88);
     text(`$${world.player.money}`, pad, pad + 26, 30, '#37e08b', 'left', 'top');
     text(`earned $${world.player.earned}   •   jobs ${world.missionsDone}/${MISSION_COUNT}`, pad, pad + 52, 14, '#eef1f5', 'left', 'top');
-    // Wanted stars, top right above the minimap.
+    // Respect bar under the cash.
+    const level = levelForRespect(world.player.respect);
+    text(`RESPECT ${level}`, pad, pad + 74, 12, '#ffd23f', 'left', 'top');
+    context.fillStyle = '#3a3f47';
+    context.beginPath();
+    context.roundRect(pad + 86, pad + 72, 150, 9, 4);
+    context.fill();
+    const rw = 150 * levelProgress(world.player.respect);
+    if (rw > 0) {
+      context.fillStyle = '#ffd23f';
+      context.beginPath();
+      context.roundRect(pad + 86, pad + 72, rw, 9, 4);
+      context.fill();
+    }
     const starsY = MINIMAP.margin + MINIMAP.height + 22;
     text('WANTED', view.width - MINIMAP.margin - 8, starsY, 13, '#eef1f5', 'right', 'top');
     let stars = '';
     for (let i = 0; i < 5; i += 1) stars += i < world.wanted ? STAR : '☆';
     text(stars, view.width - MINIMAP.margin - 8, starsY + 22, 26, world.wanted > 0 ? '#ffd23f' : '#8b93a3', 'right', 'top');
-    // Health bar, bottom left, rounded at both ends.
+    // District name under the stars: where in Port Aurora you are.
+    text(districtAt(world.player.x, world.player.y), view.width - MINIMAP.margin - 8, starsY + 56, 14, '#37c8e0', 'right', 'top');
     const barW = 220;
     const barY = view.height - 44;
     panel(pad - 6, barY - 26, barW + 12, 56);
     text('HEALTH', pad, barY - 4, 13, '#eef1f5', 'left', 'top');
+    if (world.player.armour > 0) {
+      text(`ARMOUR ${Math.round(world.player.armour)}`, pad + barW, barY - 4, 13, '#37c8e0', 'right', 'top');
+    }
     context.fillStyle = '#3a3f47';
     context.beginPath();
     context.roundRect(pad, barY + 14, barW, 12, 6);
@@ -791,7 +961,18 @@ export function createRenderer(canvas) {
       context.roundRect(pad, barY + 14, healthW, 12, 6);
       context.fill();
     }
-    // Mission objective, top centre.
+    if (world.player.armour > 0) {
+      const armourW = Math.max(0, (barW * world.player.armour) / PLAYER_ARMOUR_MAX);
+      context.fillStyle = '#37c8e0';
+      context.beginPath();
+      context.roundRect(pad, barY + 14, armourW, 5, 2);
+      context.fill();
+    }
+    // Held weapon, bottom left.
+    if (world.player.onFoot) {
+      const wname = (WEAPONS[world.player.weapon] || WEAPONS.pistol).name;
+      text(`WEAPON — ${wname}  (1–5 / wheel)`, pad, view.height - 76, 14, '#eef1f5', 'left', 'top');
+    }
     const objective = missionObjectiveText(world);
     context.font = `bold 16px ${FONT}`;
     const ow = context.measureText(objective).width + 36;
@@ -799,58 +980,63 @@ export function createRenderer(canvas) {
     context.fillStyle = '#37e08b';
     context.fillRect((view.width - ow) / 2, pad - 6, 5, 34);
     text(objective, view.width / 2, pad + 22, 16, '#eef1f5', 'center', 'top');
-    // The mission clock, big under the objective while a timed job runs.
+    // The live activity line, just under the objective.
+    const actLine = activityText(world);
+    if (actLine) {
+      context.font = `bold 14px ${FONT}`;
+      const aw = context.measureText(actLine).width + 30;
+      panel((view.width - aw) / 2, pad + 34, aw, 28);
+      text(actLine, view.width / 2, pad + 40, 14, '#ff8c42', 'center', 'top');
+    }
     const mission = world.mission;
-    if (mission && !mission.done && mission.timeLeft !== null) {
-      const clock = formatClock(mission.timeLeft);
-      const urgent = mission.timeLeft < 10;
+    const clockSource = (mission && !mission.done && mission.timeLeft !== null)
+      ? mission.timeLeft
+      : (world.activity && world.activity.timeLeft !== null ? world.activity.timeLeft : null);
+    if (clockSource !== null) {
+      const clock = formatClock(clockSource);
+      const urgent = clockSource < 10;
       const colour = urgent
         ? (Math.floor(world.time * 3) % 2 === 0 ? '#ff5a5a' : '#ffd23f')
         : '#eef1f5';
       context.font = `bold 30px ${FONT}`;
       const cw = context.measureText(clock).width + 34;
-      panel((view.width - cw) / 2, pad + 36, cw, 44);
-      text(clock, view.width / 2, pad + 44, 30, colour, 'center', 'top');
+      panel((view.width - cw) / 2, pad + 68, cw, 44);
+      text(clock, view.width / 2, pad + 76, 30, colour, 'center', 'top');
     }
-    // The race standings, under the objective while the sprint runs: your
-    // gates against hers, green when you lead and red when you do not.
     if (mission && !mission.done && mission.stage === 'race' && mission.def) {
       const total = mission.def.checkpoints.length;
       const rivalGate = world.rival ? world.rival.gate : 0;
       const lead = mission.checkpointIndex - rivalGate;
       const line = `GATES — YOU ${mission.checkpointIndex}/${total}   •   RIVAL ${rivalGate}/${total}`;
       context.font = `bold 16px ${FONT}`;
-      const rw = context.measureText(line).width + 34;
-      panel((view.width - rw) / 2, pad + 36, rw, 32);
-      text(line, view.width / 2, pad + 43, 16, lead > 0 ? '#37e08b' : (lead < 0 ? '#ff5a5a' : '#eef1f5'), 'center', 'top');
+      const rw2 = context.measureText(line).width + 34;
+      panel((view.width - rw2) / 2, pad + 68, rw2, 32);
+      text(line, view.width / 2, pad + 75, 16, lead > 0 ? '#37e08b' : (lead < 0 ? '#ff5a5a' : '#eef1f5'), 'center', 'top');
     }
-    // The cargo's integrity, under the objective while the glassware rides:
-    // an amber bar that empties a crack at a time.
     if (mission && !mission.done && mission.def && mission.def.fragile
       && mission.stage === 'deliver' && mission.cargo !== null) {
       const cw2 = 300;
       const cx2 = (view.width - cw2) / 2;
-      panel(cx2, pad + 36, cw2, 40);
-      text('CARGO', cx2 + 12, pad + 48, 13, '#eef1f5', 'left', 'top');
-      text(`${Math.max(0, Math.round(mission.cargo))}%`, cx2 + cw2 - 12, pad + 48, 13, '#eef1f5', 'right', 'top');
+      panel(cx2, pad + 68, cw2, 40);
+      text('CARGO', cx2 + 12, pad + 80, 13, '#eef1f5', 'left', 'top');
+      text(`${Math.max(0, Math.round(mission.cargo))}%`, cx2 + cw2 - 12, pad + 80, 13, '#eef1f5', 'right', 'top');
       context.fillStyle = '#3a3f47';
       context.beginPath();
-      context.roundRect(cx2 + 12, pad + 62, cw2 - 24, 8, 4);
+      context.roundRect(cx2 + 12, pad + 94, cw2 - 24, 8, 4);
       context.fill();
       const cargoW = Math.max(0, (cw2 - 24) * (mission.cargo / 100));
       if (cargoW > 0) {
         context.fillStyle = mission.cargo > 40 ? '#e8b23d' : '#ff5a5a';
         context.beginPath();
-        context.roundRect(cx2 + 12, pad + 62, cargoW, 8, 4);
+        context.roundRect(cx2 + 12, pad + 94, cargoW, 8, 4);
         context.fill();
       }
     }
-    // The results toast: what the last job paid and where the night stands.
     const toast = world.jobToast;
     if (toast && world.time < toast.until) {
       const tw = 470;
       const tx = (view.width - tw) / 2;
-      const ty = pad + 92;
+      const ty = pad + 124;
       panel(tx, ty, tw, 62, 'rgba(10,20,14,0.82)');
       context.strokeStyle = '#37e08b';
       context.lineWidth = 2;
@@ -863,8 +1049,22 @@ export function createRenderer(canvas) {
         view.width / 2, ty + 34, 14, '#eef1f5', 'center', 'top',
       );
     }
-    // Speedometer, bottom right, while driving — with the car's own damage
-    // bar underneath it, because a wreck drives like one.
+    const at = world.activityToast;
+    if (at && world.time < at.until) {
+      const tw = 440;
+      const tx = (view.width - tw) / 2;
+      const ty = view.height - 150;
+      panel(tx, ty, tw, 46, 'rgba(24,16,8,0.85)');
+      text(at.reward > 0 ? `${at.note}  (+$${at.reward})` : at.note, view.width / 2, ty + 14, 15, '#ff8c42', 'center', 'top');
+    }
+    if (world.levelUp && world.time < world.levelUp.until) {
+      const tw = 460;
+      const tx = (view.width - tw) / 2;
+      const ty = pad + 196;
+      panel(tx, ty, tw, 52, 'rgba(24,20,6,0.88)');
+      text(`RESPECT LEVEL ${world.levelUp.level}!`, view.width / 2, ty + 6, 17, '#ffd23f', 'center', 'top');
+      if (world.levelUp.unlock) text(world.levelUp.unlock, view.width / 2, ty + 28, 13, '#eef1f5', 'center', 'top');
+    }
     if (!world.player.onFoot && world.player.car) {
       const sw = 138;
       const sx = view.width - pad - sw;
@@ -873,6 +1073,7 @@ export function createRenderer(canvas) {
       const mph = Math.round(Math.abs(world.player.speed || 0) * 0.16);
       text(String(mph), sx + sw - 42, sy + 12, 32, '#eef1f5', 'right', 'top');
       text('mph', sx + sw - 10, sy + 26, 13, '#8b93a3', 'right', 'top');
+      if (world.player.car.nitro) text('NITRO — SHIFT', sx + 10, sy + 40, 10, '#37c8e0', 'left', 'top');
       const hp = Math.max(0, world.player.car.hp);
       text('CAR', sx + 10, sy + 54, 11, '#8b93a3', 'left', 'top');
       text(`${Math.round(hp)}`, sx + sw - 10, sy + 54, 11, '#eef1f5', 'right', 'top');
@@ -888,10 +1089,8 @@ export function createRenderer(canvas) {
         context.fill();
       }
     }
-    // Controls hint, bottom right.
-    text('WASD drive / walk • E enter car • Click shoot • P pause • M mute', view.width - pad, view.height - 18, 13, 'rgba(238,241,245,0.75)', 'right', 'top');
-    // Context hints, bottom centre: repairs first, then the safehouse, then the car prompt.
-    if (playerAtSafehouse(world)) {
+    text('WASD drive / walk • E enter car • F shops & activities • 1–5 weapons • Shift nitro • P pause • M mute', view.width - pad, view.height - 18, 13, 'rgba(238,241,245,0.75)', 'right', 'top');
+    if (playerAtAnySafehouse(world)) {
       let hint;
       if (!world.player.onFoot && world.player.car && world.player.car.hp < CAR_MAX_HP) {
         hint = world.player.money >= REPAIR_TICK_COST
@@ -900,7 +1099,7 @@ export function createRenderer(canvas) {
       } else {
         hint = world.wanted > 0
           ? 'Laying low at the safehouse — the heat cools fast here'
-          : 'Sol Plaza safehouse — heat cools 3.5× faster inside the ring';
+          : 'Safehouse — heat cools 3.5× faster inside the ring';
       }
       text(hint, view.width / 2, view.height - 96, 16, '#37e08b', 'center', 'top');
     }
@@ -915,7 +1114,6 @@ export function createRenderer(canvas) {
   }
 
   function drawPanel(title, lines, prompt, accent) {
-    // Size the panel to its longest line so no text ever runs past the border.
     context.font = `bold 17px ${FONT}`;
     let longest = 0;
     for (const line of lines) longest = Math.max(longest, context.measureText(line).width);
@@ -945,12 +1143,12 @@ export function createRenderer(canvas) {
     drawPanel(
       'AURORA HEAT',
       [
-        'Port Aurora. Golden hour. One driver, nine jobs, and the whole city watching.',
+        'Port Aurora. Golden hour. One driver, twelve jobs, and the whole city watching.',
         'Rook has work for you — if you can stay ahead of the Aurora PD.',
         '',
-        'WASD — walk / drive      E — steal & enter a car',
-        'Mouse + click — aim & shoot      P — pause      M — mute',
-        'Reach the markers, take the money, lose the heat.',
+        'WASD — walk / drive      E — steal & enter a car      F — shops & activities',
+        'Mouse + click — aim & shoot      1–5 / wheel — weapons      Shift — nitro',
+        'Earn Respect, unlock the locker, work the Boardwalk. Reach the markers, take the money, lose the heat.',
         save && save.best > 0 ? `Best haul so far: $${save.best}` : 'Your first night in Port Aurora starts now.',
       ],
       'Press Enter or click to start',
@@ -967,7 +1165,7 @@ export function createRenderer(canvas) {
       'BUSTED',
       [
         'The Aurora PD finally caught up with you.',
-        `Money kept: $${world.player.money}   •   Jobs finished: ${world.missionsDone}/${MISSION_COUNT}`,
+        `Money kept: $${world.player.money}   •   Jobs finished: ${world.missionsDone}/${MISSION_COUNT}   •   Respect level ${levelForRespect(world.player.respect)}`,
         save && save.best > 0 ? `Best haul: $${save.best}` : '',
       ],
       'Press Enter or click to run it back',
@@ -975,7 +1173,6 @@ export function createRenderer(canvas) {
     );
   }
 
-  /** Paint one frame: the world, then the HUD or a panel for the screen the game is on. */
   function draw(world, screen, save) {
     context.setTransform(view.ratio, 0, 0, view.ratio, 0, 0);
     context.fillStyle = '#0b0e14';
@@ -995,7 +1192,6 @@ export function createRenderer(canvas) {
   window.addEventListener('resize', resize);
   return {
     draw,
-    /** Convert a canvas-pixel mouse position to world coordinates. */
     screenToWorld(world, px, py) {
       const camX = Math.max(view.width / 2, Math.min(WORLD_WIDTH - view.width / 2, world.camera.x));
       const camY = Math.max(view.height / 2, Math.min(WORLD_HEIGHT - view.height / 2, world.camera.y));

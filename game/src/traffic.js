@@ -1,10 +1,8 @@
-// Traffic and pedestrians: the cars that cruise Port Aurora's roads and the people
-// walking its sidewalks. Traffic cars follow the road grid and turn at intersections;
-// they brake, yield and honk when the player blocks their lane. Pedestrians wander
-// the blocks, run from gunfire and reckless driving — and some of them stop and
-// watch when something worth watching happens nearby. The traffic update only ever
-// steers a car whose driver is the traffic AI — a parked car sits still, and the
-// player's car answers to the player alone.
+// Traffic and pedestrians: the vehicles that cruise Port Aurora's roads and
+// the people walking its sidewalks. v4 widens the traffic pool — sedans,
+// taxis, sports cars, heavy trucks and motorbikes — and gives pedestrians
+// more life: joggers on the Boardwalk, people waiting at crosswalks who
+// cross when the road is clear, and the watchers who film trouble.
 
 import {
   CAR_MAX_HP, RACE_RIVAL_SPEED, ROAD_WIDTH, TRAFFIC_SPEED, VEHICLE_TYPES,
@@ -13,34 +11,30 @@ import {
 import { hitsBuilding, isOnRoad, nearestRoadPoint, randomRoadPoint } from './city.js';
 
 export const TRAFFIC_COLORS = ['#d94f3d', '#3d7ad9', '#e8e3d8', '#3d3a38', '#7ab648', '#c9a13d', '#8a5fd9', '#d97ab0'];
-export const PED_COLORS = ['#e8e3d8', '#7ab648', '#d97ab0', '#3d7ad9', '#e8b23d', '#9a6b4f'];
+export const PED_COLORS = ['#e8e3d8', '#7ab648', '#d97ab0', '#3d7ad9', '#e8b23d', '#9a6b4f', '#37c8e0', '#ff8c42'];
 
-// Each car kind has its own paint box: taxis are yellow, sports coupes loud,
-// trucks whatever the freight company had on the lot.
 const TYPE_COLORS = {
   sedan: TRAFFIC_COLORS,
   taxi: ['#e8b23d'],
   sports: ['#ff5340', '#ffd23f', '#37c8e0', '#e8e3d8'],
   truck: ['#8a8f98', '#5f7a8a', '#a34a3d', '#e8e3d8'],
+  bike: ['#ff5340', '#17181c', '#37c8e0', '#7ab648'],
 };
 
-// How the traffic mix breaks down, by share of cars spawned.
 const TYPE_MIX = [
-  { type: 'sedan', share: 0.52 },
-  { type: 'taxi', share: 0.16 },
-  { type: 'sports', share: 0.14 },
-  { type: 'truck', share: 0.18 },
+  { type: 'sedan', share: 0.44 },
+  { type: 'taxi', share: 0.15 },
+  { type: 'sports', share: 0.13 },
+  { type: 'truck', share: 0.16 },
+  { type: 'bike', share: 0.12 },
 ];
 
-// The parked rows cycle through the kinds, so every kind is always on the street
-// to steal, whatever the traffic mix rolled.
-const PARKED_TYPES = ['sedan', 'taxi', 'sports', 'sedan', 'truck', 'sports'];
+const PARKED_TYPES = ['sedan', 'taxi', 'sports', 'bike', 'truck', 'sports', 'bike'];
 
-const TRAFFIC_COUNT = 14;
-const PED_COUNT = 24;
-const PARKED_COUNT = 6;
+const TRAFFIC_COUNT = 16;
+const PED_COUNT = 30;
+const PARKED_COUNT = 7;
 
-// The race rival's paint: a magenta coupe you can spot across three blocks.
 export const RIVAL_COLOR = '#e0347c';
 
 function pickTrafficType(rng) {
@@ -56,31 +50,25 @@ function buildCar(rng, type, x, y, angle, driver) {
   const stats = VEHICLE_TYPES[type];
   return {
     kind: 'traffic', x, y, angle,
-    speed: driver === 'ai' ? TRAFFIC_SPEED * rng.range(0.8, 1.15) : 0,
+    speed: driver === 'ai' ? TRAFFIC_SPEED * rng.range(0.8, 1.15) * (type === 'bike' ? 1.25 : 1) : 0,
     type, stats, length: stats.length, width: stats.width,
     color: rng.pick(TYPE_COLORS[type]),
     hp: CAR_MAX_HP, driver, turnCooldown: rng.range(0, 2),
-    honkTimer: 0, honkReady: false,
+    honkTimer: 0, honkReady: false, nitro: false, nitroLeft: 0, armoured: false, criminal: false,
   };
 }
 
-/** One traffic car: position, heading (0 = east, PI/2 = south), speed and colour. */
 function makeTrafficCar(rng, city) {
   const point = randomRoadPoint(rng);
   const angle = point.axis === 'v'
     ? (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2)
     : (rng.chance(0.5) ? 0 : Math.PI);
-  // Offset to the right-hand lane of the road.
   const lane = ROAD_WIDTH / 4;
   const x = point.axis === 'v' ? point.x + (angle === Math.PI / 2 ? lane : -lane) : point.x;
   const y = point.axis === 'v' ? point.y : point.y + (angle === 0 ? lane : -lane);
   return buildCar(rng, pickTrafficType(rng), x, y, angle, 'ai');
 }
 
-/**
- * The quiet steals: cars parked in rows along the plaza and park edges and on the
- * Marina shoulder, engines off, waiting for someone with no scruples and a job to do.
- */
 export function spawnParkedCars(rng, city) {
   const spots = [];
   for (const area of [...city.plazas, ...city.parks]) {
@@ -91,6 +79,8 @@ export function spawnParkedCars(rng, city) {
   for (let i = 0; i < 3; i += 1) {
     spots.push({ x: 2600 + i * 74, y: 126, angle: 0 });
   }
+  // A bike rack by the Boardwalk stalls.
+  spots.push({ x: 2320, y: 2148, angle: 0 });
   const cars = [];
   for (const spot of spots) {
     if (cars.length >= PARKED_COUNT) break;
@@ -109,14 +99,14 @@ function makePedestrian(rng, city) {
     y = rng.range(120, WORLD_HEIGHT - 260);
     tries += 1;
   }
+  const role = y > 1950 ? rng.pick(['walker', 'jogger', 'jogger', 'walker'])
+    : rng.pick(['walker', 'walker', 'walker', 'jogger', 'waiter']);
   return {
     x, y, angle: rng.range(0, Math.PI * 2),
-    speed: rng.range(38, 70),
+    speed: role === 'jogger' ? rng.range(105, 135) : rng.range(38, 70),
     color: rng.pick(PED_COLORS),
-    state: 'walk', wanderTimer: rng.range(1, 4), panicTimer: 0,
-    // Some people run from trouble; some stop and stare at it. The watchers are
-    // the ones still standing there when the sirens arrive.
-    watcher: rng.chance(0.45), watchTimer: 0, watchX: 0, watchY: 0,
+    state: 'walk', role, wanderTimer: rng.range(1, 4), panicTimer: 0,
+    watcher: rng.chance(0.45), watchTimer: 0, watchX: 0, watchY: 0, waitTimer: 0,
   };
 }
 
@@ -132,13 +122,6 @@ export function spawnPedestrians(rng, city) {
   return peds;
 }
 
-/**
- * Steer one traffic car along its road. At an intersection it may turn; the
- * player ahead in its lane slows it, closer still stops it — and a driver made
- * to stop leans on the horn (honkReady, which the world turns into a sound).
- * It never leaves the asphalt. Only an AI-driven car is steered at all: a
- * parked car has no driver, and the player's car is the player's.
- */
 export function updateTrafficCar(car, dt, rng, player) {
   if (car.driver !== 'ai') return;
   car.turnCooldown -= dt;
@@ -153,8 +136,6 @@ export function updateTrafficCar(car, dt, rng, player) {
     car.angle += turn;
     car.turnCooldown = rng.range(2, 5);
   }
-  // The player in the lane ahead: brake early, yield at the last moment, and
-  // honk when they make you stop dead — traffic has places to be too.
   let targetSpeed = car.speed;
   if (player) {
     const dx = player.x - car.x;
@@ -173,7 +154,6 @@ export function updateTrafficCar(car, dt, rng, player) {
   const speed = Math.max(0, targetSpeed);
   car.x += Math.cos(car.angle) * speed * dt;
   car.y += Math.sin(car.angle) * speed * dt;
-  // Wrap around the city edge instead of driving into the bay or off the map.
   if (car.x < 40 || car.x > WORLD_WIDTH - 40 || car.y < 40 || car.y > WORLD_HEIGHT - 160) {
     car.angle += Math.PI;
     car.x = Math.max(40, Math.min(WORLD_WIDTH - 40, car.x));
@@ -181,12 +161,6 @@ export function updateTrafficCar(car, dt, rng, player) {
   }
 }
 
-/**
- * Walk the pedestrians. A danger point close by — gunfire, a wanted driver, a
- * car coming too fast — sends them running from it. A spectacle a little
- * further off (a crash, a chase rolling past) does the opposite to the
- * watchers: they stop, turn, and stare until it is over.
- */
 export function updatePedestrian(ped, dt, rng, danger, spectacle) {
   ped.wanderTimer -= dt;
   if (danger && Math.hypot(ped.x - danger.x, ped.y - danger.y) < 260) {
@@ -197,17 +171,18 @@ export function updatePedestrian(ped, dt, rng, danger, spectacle) {
   if (ped.panicTimer > 0) {
     ped.panicTimer -= dt;
     ped.state = 'panic';
-    // Keep running from the danger while it lasts; if it has passed, keep
-    // running the way they were already heading.
     if (danger) ped.angle = Math.atan2(ped.y - danger.y, ped.x - danger.x);
     ped.x += Math.cos(ped.angle) * 150 * dt;
     ped.y += Math.sin(ped.angle) * 150 * dt;
   } else if (ped.watchTimer > 0) {
-    // Rooted to the spot, facing the show.
     ped.watchTimer -= dt;
     ped.state = 'watch';
     ped.angle = Math.atan2(ped.watchY - ped.y, ped.watchX - ped.x);
     if (ped.watchTimer <= 0) ped.state = 'walk';
+  } else if (ped.waitTimer > 0) {
+    // Waiting at a crosswalk: stand still until the road ahead is clear.
+    ped.waitTimer -= dt;
+    ped.state = 'wait';
   } else {
     ped.state = 'walk';
     if (spectacle && ped.watcher
@@ -223,20 +198,22 @@ export function updatePedestrian(ped, dt, rng, danger, spectacle) {
       if (ped.wanderTimer <= 0) {
         ped.angle = rng.range(0, Math.PI * 2);
         ped.wanderTimer = rng.range(1.5, 4);
+        // Walkers heading onto a road sometimes pause at the kerb first.
+        const aheadX = ped.x + Math.cos(ped.angle) * 30;
+        const aheadY = ped.y + Math.sin(ped.angle) * 30;
+        if (ped.role === 'waiter' && isOnRoad(aheadX, aheadY) && !isOnRoad(ped.x, ped.y)) {
+          ped.waitTimer = rng.range(0.6, 1.6);
+        }
       }
-      ped.x += Math.cos(ped.angle) * ped.speed * dt;
-      ped.y += Math.sin(ped.angle) * ped.speed * dt;
+      const pace = ped.role === 'jogger' ? ped.speed : ped.speed;
+      ped.x += Math.cos(ped.angle) * pace * dt;
+      ped.y += Math.sin(ped.angle) * pace * dt;
     }
   }
   ped.x = Math.max(30, Math.min(WORLD_WIDTH - 30, ped.x));
   ped.y = Math.max(30, Math.min(WORLD_HEIGHT - 200, ped.y));
 }
 
-/**
- * The race rival's coupe: a sports car in magenta, driver 'rival'. It is not
- * traffic — the traffic update never steers it, the player cannot steal it —
- * it exists for one job and answers to updateRivalCar alone.
- */
 export function makeRivalCar(rng, x, y, angle) {
   const car = buildCar(rng, 'sports', x, y, angle, 'rival');
   car.color = RIVAL_COLOR;
@@ -246,12 +223,6 @@ export function makeRivalCar(rng, x, y, angle) {
   return car;
 }
 
-/**
- * Drive the rival toward a point: steer like a pursuit driver, quick on the
- * straights and slower through the turns, sliding along buildings instead of
- * through them — and backing out and turning away when she wedges herself,
- * the same trick the cruisers use. Returns the distance left to the point.
- */
 export function updateRivalCar(car, tx, ty, dt, city) {
   const dx = tx - car.x;
   const dy = ty - car.y;
@@ -262,7 +233,6 @@ export function updateRivalCar(car, tx, ty, dt, city) {
   while (diff < -Math.PI) diff += Math.PI * 2;
   const steer = Math.max(-1, Math.min(1, diff * 2.2));
   car.angle += steer * 2.5 * dt;
-  // Slow for the turn ahead: the sharper the angle, the lighter the throttle.
   const pace = RACE_RIVAL_SPEED * (1 - Math.min(0.55, Math.abs(diff) * 0.45));
   car.speed = pace;
   const r = car.length / 2;
@@ -274,7 +244,6 @@ export function updateRivalCar(car, tx, ty, dt, city) {
   if (!hitsBuilding(city, car.x, ny, r)) car.y = ny;
   car.x = Math.max(30, Math.min(WORLD_WIDTH - 30, car.x));
   car.y = Math.max(30, Math.min(WORLD_HEIGHT - 150, car.y));
-  // Wedged against a wall: back out and turn away, then resume the run.
   const moved = Math.hypot(car.x - prevX, car.y - prevY);
   if (pace > 100 && moved < pace * dt * 0.25) car.stuckTimer += dt;
   else car.stuckTimer = 0;
@@ -289,7 +258,6 @@ export function updateRivalCar(car, tx, ty, dt, city) {
   return dist;
 }
 
-/** The closest car to (x, y) within `maxDist`, or null. The rival's coupe is never a steal. */
 export function nearestCarTo(cars, x, y, maxDist) {
   let best = null;
   let bestDist = maxDist;

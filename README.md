@@ -2,7 +2,7 @@
 [![rank](https://make.fun/badge/gta6-01/kai0x3/aurora-heat/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/kai0x3/aurora-heat/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-# Aurora Heat
+# Aurora Heat — v4
 
 An original top-down 2D open-world crime game, built by an AI agent for
 make.fun's **Make GTA 6** bounty (gta6-01). No Rockstar names, characters, art,
@@ -10,12 +10,12 @@ maps or assets anywhere — Port Aurora, its people and its story are all our ow
 
 ## The pitch
 
-Port Aurora. Golden hour. One driver, nine jobs, and the whole city watching.
+Port Aurora. Golden hour. One driver, twelve jobs, and the whole city watching.
 Rook, a fixer who works out of the Marina, has work for you — if you can stay
-ahead of the Aurora PD. Steal a car off the street, run the package across
-town, beat a checkpoint clock, outrun the other driver in Rook's stable,
-carry a crate of glassware across the city without cracking it, and shake
-five stars — helicopter and all — on the kingpin's last run.
+ahead of the Aurora PD. v4 turns the one-night story into a career: earn
+**Respect**, unlock a five-weapon locker, fit nitro at the garage, work taxi
+fares, vigilante stops and rampages between jobs, and hold the new Boardwalk
+district — ferris wheel, stalls, port cranes and all — when the heat comes.
 
 ## How to play
 
@@ -34,7 +34,10 @@ No build step, no network: every script, style and sound is a file under
 | Input | Does |
 | --- | --- |
 | W / A / S / D or arrows | Walk, or drive (accelerate, steer, brake/reverse) |
-| E | Steal / enter the nearest car, or step out of it |
+| E | Steal / enter the nearest vehicle, or step out of it |
+| F | Buy at a shop ring, or start a side activity at its marker |
+| 1–5 or mouse wheel | Switch weapon (fists, pistol, SMG, shotgun, rifle) |
+| Shift (hold) | Burn nitro, if your car has it fitted |
 | Mouse + click, or Space | Aim and shoot (on foot) |
 | P or Esc | Pause |
 | M | Mute the music and sound |
@@ -42,20 +45,18 @@ No build step, no network: every script, style and sound is a file under
 
 ## Features
 
-- **A city to explore** — Port Aurora is a 3200×2400 open world on a road grid: downtown towers with parapets and rooftop air conditioners, parks, plazas, beach palms, and a waterfront bay with drifting shimmer along the south edge, all generated from a seed.
-- **A full day cycle** — over five minutes the light runs from golden morning through dusk into a blue night: windows light up pane by pane in a hashed patchwork, street lamps pool their glow at the intersections, and every car throws a headlight cone ahead of it. The renderer draws at up to twice the device pixel ratio and paints only what the camera can see, so it stays crisp and smooth.
-- **A living city** — traffic cruises the roads and turns at intersections, and it has opinions: block a driver's lane and they brake, yield, and lean on the horn. Pedestrians walk the sidewalks, run from gunfire and reckless driving — and the watchers among them stop, turn, and pull out a phone when a crash or a chase rolls past.
-- **Four kinds of car to steal and drive** — sedans, yellow taxis, sports coupes and lumbering trucks, each with its own top speed, acceleration and steering. A stolen truck genuinely lumbers; a sports coupe is the fastest thing in the city. Six more cars sit parked in rows at the plazas and the Marina as quiet steals.
-- **Cars take damage now** — every hard crash and ram costs your ride hit points: it smokes from the bonnet as they fall, darker and thicker the worse it gets, the HUD shows a CAR bar under the speedometer, and a car under a third of its strength pulls at barely two-thirds pace. Park it inside the Sol Plaza ring and the safehouse crew patches it back up, billed by the tick.
-- **Wanted level and police** — crimes raise your stars (0–5). Aurora PD cruisers spawn on the roads, chase you down with sirens, and ram — and every star makes them quicker. At four stars and up they park roadblocks across the road ahead: ram one apart, shoot it apart, or dodge it.
-- **The helicopter** — at five stars the PD puts a bird up. It orbits you with its spotlight pinned to your car, drawn as a cone of light and a bright pool on the ground (at night it is a searchlight you can read by), and while the light is on you your wanted level cannot cool. Lose the fifth star and it banks away.
-- **The Sol Plaza safehouse** — the hideout's ring is marked on the ground and the minimap. Lying low inside it cools your wanted level 3.5× faster than anywhere else — and it is where the crew repairs your car.
-- **Nine missions with a story** — (1) reach the Marina checkpoint, (2) pick up a package at the docks and deliver it to the hideout, (3) a fare against one shared 50-second clock, (4) a checkpoint run where every gate buys time, (5) the Harbor Sprint: a street race against Rook's other driver in her magenta coupe — six gates, first to the last one wins, (6) lose a three-star wanted level, (7) the Glass Run: a crate of vintage glassware from the docks to Crescent Lofts that cracks with every hard crash and fails at nothing whole, (8) a four-star getaway to the safehouse, (9) a kingpin run at five stars with the helicopter up. Timed jobs restart when the clock runs out; the race restarts when she beats you; the glass restarts when it breaks. Every finished job pops a results toast with its payout and the night's totals. All nine pay $6,700 between them.
-- **Feel** — hard steering at speed lays fading skid marks and sets the tyres screeching; crashes spark, wrecks smoke, and taking a hit flushes the edges of the screen red for a moment. A speedometer with a car-damage bar and a big mission clock (red under ten seconds) sit on the HUD, and while the glassware rides, an amber CARGO bar counts what is still whole.
-- **Combat** — mouse-aimed shooting on foot. Bullets damage police cruisers — roadblock cars included — and scatter pedestrians.
-- **HUD with minimap** — a live minimap shows the city, your position, traffic, police, the rival's magenta dot during the sprint, the helicopter, the safehouse and the mission marker; plus wanted stars, a rounded health bar, money and the current objective, all on rounded panels with soft shadows under a light cinema vignette. When the mission target is off-screen, a green arrow rides the edge of the screen pointing at it, with the distance underneath.
-- **Save** — money, best haul and jobs finished persist in `localStorage` between visits.
-- **Sound and music** — fully synthesized Web Audio: an engine that climbs gear by gear with speed, two-tone sirens with a distant wail underneath whenever the heat is on, traffic horns, tyre screech, gunshots, pickup and checkpoint chimes, matched success and failure stings, and a bass loop with a pentatonic lead pluck. M to mute.
+- **Twelve missions with a story** — the original nine (the first run, the package, the fare, the checkpoint run, the Harbor Sprint race against Rook's magenta coupe, lose-the-heat, the fragile Glass Run, the four-star getaway, and the five-star Kingpin Run with the helicopter up) plus three new jobs that show off v4: a motorbike courier run to the Boardwalk, a taxi shift that goes wrong under live heat, and a vigilante introduction on the Boardwalk. All twelve pay $9,050 between them, and every finish also pays Respect.
+- **Side activities** — repeatable, minimap-marked, paying cash + Respect: **Taxi fares** (pick up flagged passengers; the fare grows with a clean, quick delivery), **Vigilante** (stop the marked criminal car against the clock), **Rampage** (a timed score attack in a marked Boardwalk zone — near misses, drifts and chaos score), and the **street race made repeatable** with best-time tracking.
+- **Respect progression** — missions, activities and near-miss driving earn Respect across six levels. Levels unlock the SMG and nitro (2), the shotgun (3), the rifle and body armour (4), and a second safehouse on the Boardwalk (5). The HUD carries a Respect bar and a level-up toast naming what you just unlocked.
+- **A cash economy** — **Aurora Arms** sells the weapon locker (level-gated); **Torque & Tone Garage** fits nitro, plates car armour and resprays your ride. Safehouse repairs still bill by the tick. Cash and armour pickups dot the streets.
+- **Five vehicle kinds** — sedans, taxis, sports cars, heavy trucks and the new **motorbike**: fastest and nimblest thing in the city, and fragile enough that you feel every wall. Traffic mixes all five; parked rows include a bike by the Boardwalk stalls.
+- **Five weapons** — fists (melee), pistol, fast SMG, six-pellet shotgun spread and the long-range rifle, switched with number keys or the wheel, bought at Aurora Arms, with hit markers and a muzzle flash when you connect.
+- **The Boardwalk district** — a promenade strip along the south-east shore with the turning **Aurora Wheel**, food stalls, joggers, and the port cranes over the docks. The HUD names the district you are in (Boardwalk, Docks, Marina, Downtown, Sol Plaza). Pedestrians gained variety too: joggers, crosswalk waiters who pause at the kerb, and the watchers who stop and film.
+- **A living, wanted city** — traffic that brakes, yields and honks; a 0–5 star wanted level with chasing cruisers, roadblocks at four stars, and the helicopter's spotlight at five, which pins your heat in place. Two safehouses cool wanted 3.5× faster (the Boardwalk one unlocks at Respect 5). A full five-minute day cycle lights windows pane by pane and pools lamp glow at night.
+- **Game feel** — screen shake on hard hits, hit markers, near-miss bonuses (+$15 and Respect for threading traffic at speed), fading skid marks and tyre screech, nitro flame particles, crash sparks, wreck smoke that thickens with damage, and a red hurt vignette.
+- **HUD with minimap** — cash, Respect bar, wanted stars, district name, health + armour bars, held weapon, speedometer with car-damage bar, mission clock, objective arrow with distance, and a live minimap showing traffic, police, shops, activity markers, both safehouses, the helicopter and the mission target.
+- **Save** — money, best haul, jobs finished, Respect, owned weapons and best race time persist in `localStorage` between visits.
+- **Sound and music** — fully synthesized Web Audio: a gear-stepped engine, two-tone sirens with a distant wail, per-weapon gunshots, a shop till, a level-up motif, a nitro whoosh, traffic horns, and a bass loop with a pentatonic lead pluck. M to mute.
 - **Screens** — title screen with the story and controls, pause, and a "Busted" game-over screen with restart.
 
 ## Structure
@@ -66,15 +67,18 @@ game/
   style.css           the page around the canvas
   src/
     config.js         every tuning number in one place
-    random.js         seeded RNG (mulberry32)
-    city.js           Port Aurora: roads, blocks, buildings, parks, bay
+    random.js         seeded RNG (mulberry32) — the only gameplay randomness
+    city.js           Port Aurora: roads, blocks, districts, Boardwalk landmarks
     world.js          the state and one fixed step that moves it all
-    traffic.js        traffic cars (four kinds, plus parked rows), pedestrians, the race rival
-    police.js         wanted level, pursuit, roadblocks, the helicopter, the safehouse cooldown
-    missions.js       the nine jobs: clocks, checkpoints, the race and the fragile cargo
-    combat.js         shooting, bullets, cruiser damage
+    traffic.js        traffic (five kinds, plus parked rows), pedestrians, the race rival
+    police.js         wanted level, pursuit, roadblocks, the helicopter, safehouses
+    missions.js       the twelve jobs: clocks, checkpoints, the race, fragile cargo
+    activities.js     side activities: taxi, vigilante, rampage, repeatable race
+    progression.js    Respect, levels and unlocks
+    shops.js          Aurora Arms and the Torque & Tone Garage
+    combat.js         the weapon locker: fists, pistol, SMG, shotgun, rifle
     render.js         canvas drawing: city, day cycle, helicopter, HUD, minimap, screens
-    input.js          keyboard and mouse
+    input.js          keyboard, mouse, wheel, nitro
     audio.js          synthesized Web Audio sound and music
     shots.js          deterministic screenshot scenes (?shot=…)
     main.js           boot, the game loop, save/load, screens
@@ -83,12 +87,10 @@ game/
 ## Screenshots
 
 The four shots in `screenshots/` are real renders of the game in a browser,
-taken with `?shot=start|race|drive|heli` (fixed seed, deterministic, rendered
-at twice the device scale so they stay crisp): the title screen, the Harbor
-Sprint a moment after the first gate with the rival's magenta coupe alongside
-and the standings on the HUD, driving a sports coupe with skid marks and the
-speedometer up, and a five-star night run under the helicopter's spotlight
-with a roadblock forming ahead.
+taken with `?shot=cover|taxi|boardwalk|night` (fixed seed, deterministic):
+a five-star Kingpin Run chase under the helicopter as the cover, a taxi fare
+mid-delivery with the activity HUD up, on-foot combat on the Boardwalk under
+the Aurora Wheel, and night over downtown with the Aurora Arms ring lit.
 
 ## License
 

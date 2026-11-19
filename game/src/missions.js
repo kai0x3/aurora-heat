@@ -1,16 +1,15 @@
-// The story and its nine jobs. Rook, a fixer who works out of the Marina, keeps
-// finding work for a driver who can stay ahead of the Aurora PD: a first run to
-// prove yourself, a package to move, a fare against the clock, a checkpoint run,
-// a street race against the other driver in Rook's stable, two escapes, a crate
-// of glassware that has to arrive whole, and a kingpin run at five stars to
-// finish the night. Each job has a title, a story beat, an objective the HUD
-// shows, a target on the map, and a cash reward; timed jobs share one mission
-// clock between their stages, and a clock that runs out restarts the job.
-// Finishing all nine leaves the player free-roaming Port Aurora with the money
-// they earned.
+// The story and its twelve jobs (v4). Rook, a fixer who works out of the
+// Marina, keeps finding work for a driver who can stay ahead of the Aurora
+// PD. The first nine jobs are the v3 night; v4 adds three more that show off
+// the new Port Aurora: a motorbike courier run to the Boardwalk, a taxi
+// shift that goes wrong, and a vigilante introduction for the precinct's
+// least favourite citizen. Each job has a title, a story beat, an objective,
+// a target and a cash reward — and every finish pays Respect as well as cash.
+// Timed jobs share one mission clock between their stages.
 
-import { CARGO_CRASH_DAMAGE, SAFEHOUSE } from './config.js';
+import { CARGO_CRASH_DAMAGE, RESPECT_MISSION, SAFEHOUSE } from './config.js';
 import { makeRivalCar } from './traffic.js';
+import { awardRespect } from './progression.js';
 
 export const MISSION_DEFS = [
   {
@@ -119,7 +118,7 @@ export const MISSION_DEFS = [
   {
     id: 'kingpin-run',
     title: 'Job 9 — Kingpin Run',
-    story: 'The last job of the night, and the whole force knows your face: five stars from the first block, and the helicopter with them. Take the kingpin\'s package off the docks and deliver it to his people at the Marina.',
+    story: 'The last job of the old night, and the whole force knows your face: five stars from the first block, and the helicopter with them. Take the kingpin\'s package off the docks and deliver it to his people at the Marina.',
     objective: 'Pick up the package at the docks, then deliver it to the Marina — at five stars',
     targetName: 'the Marina',
     reward: 1200,
@@ -128,9 +127,46 @@ export const MISSION_DEFS = [
     target: { x: 3000, y: 200 },
     radius: 90,
   },
+  {
+    id: 'boardwalk-courier',
+    title: 'Job 10 — Boardwalk Courier',
+    story: 'New night, new wheels. A promoter at the Aurora Wheel needs contracts from the docks before the Boardwalk show starts — and the job is built for a motorbike: narrow, quick, and gone. Grab the packet at the docks and thread it to the Boardwalk.',
+    objective: 'Pick up the packet at the docks, then deliver it to the Aurora Wheel on the Boardwalk',
+    targetName: 'the Aurora Wheel',
+    reward: 700,
+    pickup: { x: 200, y: 2000 },
+    target: { x: 2850, y: 2050 },
+    radius: 95,
+    timeLimit: 75,
+  },
+  {
+    id: 'night-fare',
+    title: 'Job 11 — Night Fare',
+    story: 'You take one honest taxi shift and this happens: your fare at the Boardwalk is a witness, the two stars behind you are not a tip, and her safe address is across town. One clock, live heat — drive like a cabbie with something to lose.',
+    objective: 'Pick up the fare at the Boardwalk, then reach Harbor View — one clock, with the heat on',
+    targetName: 'Harbor View',
+    reward: 850,
+    startWanted: 2,
+    pickup: { x: 2400, y: 2050 },
+    target: { x: 600, y: 600 },
+    radius: 90,
+    timeLimit: 70,
+  },
+  {
+    id: 'first-watch',
+    title: 'Job 12 — First Watch',
+    story: 'A shopkeeper on the Boardwalk keeps getting rolled by the same crew, and tonight you are the neighbourhood watch. Two stars of attention are already on you — reach the Boardwalk safehouse corner and hold the block until the heat cools and the street is yours.',
+    objective: 'Reach the Boardwalk corner, then lose the 2-star heat',
+    targetName: 'the Boardwalk corner',
+    reward: 800,
+    startWanted: 2,
+    target: { x: 2600, y: 2000 },
+    radius: 110,
+  },
 ];
 
 export const MISSION_COUNT = MISSION_DEFS.length;
+export const MISSION_TOTAL_REWARD = MISSION_DEFS.reduce((sum, def) => sum + def.reward, 0);
 
 function initialStage(def) {
   if (def.pickup) return 'pickup';
@@ -140,7 +176,6 @@ function initialStage(def) {
   return 'go';
 }
 
-/** Take the rival's coupe off the street, if it is on it. */
 function clearRival(world) {
   if (world.rival && world.rival.car) {
     const index = world.cars.indexOf(world.rival.car);
@@ -164,9 +199,6 @@ function beginJob(world, index, applyHeat) {
     startedAt: world.time,
   };
   if (def.race) {
-    // The rival waits on the road at the first gate, on the centreline so her
-    // run down the course starts clean, engine running. Her clock starts when
-    // the player crosses that gate — until then she just sits there, patient.
     const gate = def.checkpoints[0];
     const car = makeRivalCar(world.rng, gate.x - 90, gate.y, 0);
     world.cars.push(car);
@@ -174,7 +206,6 @@ function beginJob(world, index, applyHeat) {
   }
   if (applyHeat) {
     if (def.id === 'heat-escape') {
-      // The escape starts hot: three stars, cruisers already rolling.
       world.wanted = 3;
       world.timeSinceCrime = 0;
       world.wantedTimer = 0;
@@ -190,7 +221,6 @@ export function startMission(world, index) {
   return beginJob(world, index, true);
 }
 
-/** The map point the HUD marker and minimap should point at right now, or null. */
 export function missionTarget(world) {
   const mission = world.mission;
   if (!mission || mission.done || !mission.def) return null;
@@ -202,7 +232,6 @@ export function missionTarget(world) {
   return null;
 }
 
-/** The objective line the HUD shows for the current mission. */
 export function missionObjectiveText(world) {
   const mission = world.mission;
   if (!mission || !mission.def) return 'Free roam — explore Port Aurora';
@@ -210,6 +239,7 @@ export function missionObjectiveText(world) {
   const def = mission.def;
   if (mission.stage === 'pickup') {
     if (def.id === 'the-fare') return 'Pick up the passenger at Harbor & 5th — the clock is already running';
+    if (def.id === 'night-fare') return 'Pick up the fare at the Boardwalk — the clock and the heat are both running';
     if (def.fragile) return 'Pick up the glassware at the docks (west end) — gently does it';
     return 'Pick up the package at the docks (west end)';
   }
@@ -228,11 +258,11 @@ export function missionObjectiveText(world) {
   return def.objective;
 }
 
-/** The line the game announces when a mission event lands, worded for the job it belongs to. */
 export function missionEventText(world, event) {
   if (event === 'package-picked') {
     const def = world.mission && world.mission.def;
     if (def && def.id === 'the-fare') return `Passenger aboard. Get her to ${def.targetName} before the clock runs out.`;
+    if (def && def.id === 'night-fare') return `Fare aboard and the heat is live. Get her to ${def.targetName}.`;
     if (def && def.fragile) return `Glassware aboard — every hard knock cracks it. Deliver it whole to ${def.targetName}.`;
     if (def) return `Package secured. Deliver it to ${def.targetName}.`;
     return 'Package secured.';
@@ -250,11 +280,6 @@ export function missionEventText(world, event) {
   return '';
 }
 
-/**
- * Fail the current job and restart it fresh: the heat stays exactly as it
- * lies, the clock (or the cargo, or the rival) resets. `reason` is 'time',
- * 'cargo' or 'outrun' and words the announcement.
- */
 function failJob(world, reason) {
   const def = world.mission.def;
   world.jobFailed = { title: def.title, reason };
@@ -270,6 +295,8 @@ function completeMission(world) {
   world.player.money += def.reward;
   world.player.earned += def.reward;
   world.missionsDone += 1;
+  const levelUp = awardRespect(world, RESPECT_MISSION);
+  if (levelUp) world.levelUp = { ...levelUp, until: world.time + 5 };
   world.jobToast = {
     title: def.title,
     reward: def.reward,
@@ -290,11 +317,6 @@ function completeMission(world) {
   return 'mission-complete';
 }
 
-/**
- * A hard crash while the glassware is aboard (called by the world, which owns
- * collisions). Each one cracks CARGO_CRASH_DAMAGE of the load; at nothing left
- * the job fails and restarts. Returns 'mission-failed' or null.
- */
 export function damageCargoOnCrash(world) {
   const mission = world.mission;
   if (!mission || mission.done || !mission.def || !mission.def.fragile) return null;
@@ -307,13 +329,6 @@ export function damageCargoOnCrash(world) {
   return null;
 }
 
-/**
- * Advance the current mission by one step. Returns an event string
- * ('mission-complete', 'package-picked', 'checkpoint', 'mission-failed') or null.
- * The mission clock runs through every stage of a timed job — the fare's pickup
- * leg spends the same seconds as its delivery — and a clock at zero restarts it.
- * The race has no clock: it has the rival, and her finishing first restarts it.
- */
 export function updateMission(world, dt) {
   const mission = world.mission;
   if (!mission || mission.done || !mission.def) return null;
@@ -343,8 +358,6 @@ export function updateMission(world, dt) {
     return null;
   }
   if (mission.stage === 'race') {
-    // The rival's progress: once the player starts her clock, every gate she
-    // reaches is one the player has to answer. Her last gate ends the job.
     const rival = world.rival;
     if (rival && rival.started && !rival.finished) {
       const gate = def.checkpoints[rival.gate];

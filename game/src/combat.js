@@ -1,27 +1,64 @@
-// On-foot shooting: mouse aim, click or Space to fire. Bullets fly straight, hit
-// police cruisers and pedestrians, and spark against buildings. Firing is a crime —
-// it draws the wanted level up, and the sound of it sends the street running.
+// On-foot combat (v4): a five-slot weapon locker — fists, pistol, SMG,
+// shotgun and rifle — switched with the number keys or the mouse wheel and
+// bought at Aurora Arms. Each weapon has its own damage, cooldown, range,
+// spread and pellet count. Hits raise a hit marker on the HUD; firing is a
+// crime and the sound of it sends the street running.
 
-import { BULLET_DAMAGE, BULLET_RANGE, BULLET_SPEED } from './config.js';
+import { WEAPONS } from './config.js';
 import { hitsBuilding } from './city.js';
 import { addWanted } from './police.js';
 
-/** Fire one bullet from (x, y) along `angle`. Returns the bullet, or null on cooldown. */
+/** The definition of the player's currently held weapon. */
+export function currentWeapon(world) {
+  return WEAPONS[world.player.weapon] || WEAPONS.pistol;
+}
+
+/** Switch to an owned weapon by id. Returns true when the switch happened. */
+export function switchWeapon(world, id) {
+  if (!WEAPONS[id] || !world.player.weapons.includes(id)) return false;
+  world.player.weapon = id;
+  world.fireCooldown = Math.max(world.fireCooldown, 0.12);
+  return true;
+}
+
+/** Fire the held weapon from (x, y) along `angle`. Returns true when it fired. */
 export function fireBullet(world, x, y, angle) {
-  if (world.fireCooldown > 0) return null;
-  world.fireCooldown = 0.16;
-  const bullet = {
-    x, y,
-    vx: Math.cos(angle) * BULLET_SPEED,
-    vy: Math.sin(angle) * BULLET_SPEED,
-    travelled: 0,
-  };
-  world.bullets.push(bullet);
+  if (world.fireCooldown > 0) return false;
+  const def = currentWeapon(world);
+  world.fireCooldown = def.cooldown;
   world.shotsFired += 1;
-  // Every few shots, the sound of gunfire draws attention.
+  if (def.speed === 0) {
+    // Melee: a short arc in front of the player.
+    for (const ped of world.peds) {
+      if (Math.hypot(ped.x - x, ped.y - y) < def.range + 14) {
+        ped.state = 'panic';
+        ped.panicTimer = 2;
+        world.hitmarkAt = world.time;
+      }
+    }
+    for (const car of world.police) {
+      if (Math.hypot(car.x - x, car.y - y) < def.range + 22) {
+        car.hp -= def.damage;
+        world.hitmarkAt = world.time;
+        spawnSparks(world, car.x, car.y, '#ff7a3d');
+        if (car.hp <= 0) destroyPoliceCar(world, car);
+      }
+    }
+    return true;
+  }
+  for (let p = 0; p < def.pellets; p += 1) {
+    const a = angle + (world.rng.next() - 0.5) * 2 * def.spread + (def.pellets > 1 ? (p - (def.pellets - 1) / 2) * 0.055 : 0);
+    world.bullets.push({
+      x, y,
+      vx: Math.cos(a) * def.speed,
+      vy: Math.sin(a) * def.speed,
+      travelled: 0, range: def.range, speed: def.speed, damage: def.damage,
+    });
+  }
   if (world.shotsFired % 4 === 1) addWanted(world, 1);
   spawnMuzzle(world, x, y, angle);
-  return bullet;
+  world.muzzleAt = world.time;
+  return true;
 }
 
 function spawnMuzzle(world, x, y, angle) {
@@ -36,15 +73,14 @@ function spawnMuzzle(world, x, y, angle) {
   }
 }
 
-/** Move bullets, test hits against cruisers and pedestrians, and spark off walls. */
 export function updateBullets(world, dt) {
   const bullets = world.bullets;
   for (let i = bullets.length - 1; i >= 0; i -= 1) {
     const b = bullets[i];
     b.x += b.vx * dt;
     b.y += b.vy * dt;
-    b.travelled += BULLET_SPEED * dt;
-    let dead = b.travelled > BULLET_RANGE;
+    b.travelled += (b.speed || 900) * dt;
+    let dead = b.travelled > (b.range || 620);
     if (!dead && hitsBuilding(world.city, b.x, b.y, 2)) {
       spawnSparks(world, b.x, b.y, '#e8d44f');
       dead = true;
@@ -52,9 +88,21 @@ export function updateBullets(world, dt) {
     if (!dead) {
       for (const car of world.police) {
         if (Math.hypot(car.x - b.x, car.y - b.y) < 30) {
-          car.hp -= BULLET_DAMAGE;
+          car.hp -= b.damage || 34;
+          world.hitmarkAt = world.time;
           spawnSparks(world, b.x, b.y, '#ff7a3d');
           if (car.hp <= 0) destroyPoliceCar(world, car);
+          dead = true;
+          break;
+        }
+      }
+    }
+    if (!dead) {
+      for (const car of world.cars) {
+        if (car.kind === 'police') continue;
+        if (Math.hypot(car.x - b.x, car.y - b.y) < 30) {
+          world.hitmarkAt = world.time;
+          spawnSparks(world, b.x, b.y, '#ffd23f');
           dead = true;
           break;
         }
@@ -88,7 +136,6 @@ function spawnSparks(world, x, y, color) {
   }
 }
 
-/** A cruiser shot (or rammed) to pieces: smoke, a wanted bump, and it leaves the street. */
 export function destroyPoliceCar(world, car) {
   for (let i = 0; i < 14; i += 1) {
     world.particles.push({
@@ -103,5 +150,8 @@ export function destroyPoliceCar(world, car) {
   if (index !== -1) world.police.splice(index, 1);
   const carIndex = world.cars.indexOf(car);
   if (carIndex !== -1) world.cars.splice(carIndex, 1);
+  const blockIndex = world.roadblock.cars.indexOf(car);
+  if (blockIndex !== -1) world.roadblock.cars.splice(blockIndex, 1);
   addWanted(world, 1);
+  world.shake = Math.min(14, (world.shake || 0) + 7);
 }

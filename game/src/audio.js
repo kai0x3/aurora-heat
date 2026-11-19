@@ -1,15 +1,13 @@
-// Synthesized sound, no audio files: every effect is an oscillator or a burst of
-// filtered noise through the Web Audio API, and the music is a small bass loop
-// with a pentatonic lead pluck over it, scheduled ahead of time. The engine
-// climbs through stepped gears as the car speeds up; two sirens sing at once —
-// the cruisers on your tail, loud and close, and a distant wail somewhere
-// across the city whenever the heat is on. A looping band of noise screeches
-// while the player's tyres slide, and traffic horns answer when you block the
-// lane. Nothing starts until the player first interacts — browsers require a
-// user gesture before audio may play.
+// Synthesized sound, no audio files: every effect is an oscillator or a burst
+// of filtered noise through the Web Audio API, and the music is a small bass
+// loop with a pentatonic lead pluck. v4 adds a till cha-ching for shop
+// purchases, a rising level-up motif for Respect, a nitro whoosh, an activity
+// chime, and per-weapon shot character (the shotgun booms lower and wider
+// than the pistol cracks). The engine climbs through stepped gears; two
+// sirens sing at once — the cruisers close, and a distant wail across the
+// city whenever the heat is on. Nothing starts until the first user gesture.
 
 const BASS_NOTES = [55, 55, 65.41, 49, 55, 55, 73.42, 65.41];
-// A pentatonic lead over the bass: sparse plucks, one every few steps.
 const LEAD_NOTES = [220, 261.63, 329.63, 392, 329.63, 293.66, 261.63, 220];
 
 export function createAudio() {
@@ -72,10 +70,6 @@ export function createAudio() {
   }
 
   function startAmbience() {
-    // The far-off siren: a slow sine wail, an LFO dragging its pitch up and
-    // down over nine seconds, muffled through a low filter. It is the sound of
-    // the rest of the force, somewhere out there in the city, while you are
-    // wanted — never loud, never quite locatable.
     const osc = context.createOscillator();
     osc.type = 'sine';
     osc.frequency.value = 740;
@@ -99,7 +93,6 @@ export function createAudio() {
   }
 
   function startScreech() {
-    // Looping noise through a high band: silent until the tyres start sliding.
     const noise = context.createBufferSource();
     noise.buffer = noiseBuffer();
     noise.loop = true;
@@ -116,8 +109,6 @@ export function createAudio() {
   }
 
   function startMusic() {
-    // A slow bass loop: one note every half second, scheduled a step at a time,
-    // with a soft hat on the off-beat and a lead pluck every fourth step.
     musicTimer = window.setInterval(() => {
       if (!context || muted) return;
       const note = BASS_NOTES[musicStep % BASS_NOTES.length];
@@ -133,7 +124,6 @@ export function createAudio() {
       gain.connect(master);
       osc.start(now);
       osc.stop(now + 0.5);
-      // A soft hat tick on the off-beat keeps the loop moving.
       if (musicStep % 2 === 0) {
         const noise = context.createBufferSource();
         noise.buffer = noiseBuffer();
@@ -145,7 +135,6 @@ export function createAudio() {
         noise.start(now + 0.25);
         noise.stop(now + 0.33);
       }
-      // The lead: a quiet pentatonic pluck, triangle with a fast fall.
       if (musicStep % 4 === 0) {
         const lead = context.createOscillator();
         lead.type = 'triangle';
@@ -167,7 +156,13 @@ export function createAudio() {
     const length = context.sampleRate * 0.5;
     cachedNoise = context.createBuffer(1, length, context.sampleRate);
     const data = cachedNoise.getChannelData(0);
-    for (let i = 0; i < length; i += 1) data[i] = Math.random() * 2 - 1;
+    // Audio noise is texture, not gameplay: a fixed LCG keeps even this
+    // deterministic and out of the game's seeded RNG stream.
+    let s = 22222;
+    for (let i = 0; i < length; i += 1) {
+      s = (Math.imul(s, 1103515245) + 12345) | 0;
+      data[i] = ((s >>> 9) / 8388608) - 1;
+    }
     return cachedNoise;
   }
 
@@ -206,7 +201,6 @@ export function createAudio() {
   }
 
   return {
-    /** Call from any user gesture: creates the context and resumes it. */
     unlock() {
       if (ensure() && context.state === 'suspended') context.resume().catch(() => {});
     },
@@ -217,17 +211,10 @@ export function createAudio() {
     isMuted() {
       return muted;
     },
-    /**
-     * Call every frame: the engine pitch climbs gear by gear with speed, the
-     * close siren wails while wanted with the distant one underneath it, and
-     * the screech follows the slide.
-     */
     update({ driving, speed, wanted, sliding }) {
       if (!context) return;
       const now = context.currentTime;
       if (engineOsc) {
-        // Stepped gears: the pitch climbs inside a gear, drops at the shift,
-        // and climbs again — the oldest sound in driving games.
         const s = Math.abs(speed);
         const gear = Math.min(4, Math.floor(s / 170));
         const inGear = Math.min(1, (s - gear * 170) / 170);
@@ -250,8 +237,13 @@ export function createAudio() {
         screechGain.gain.setTargetAtTime(sliding ? 0.11 : 0, now, 0.06);
       }
     },
-    shot() {
-      burst(0.12, 1800, 0.35);
+    /** Weapon-aware shot: heavier weapons boom lower. */
+    shot(weapon) {
+      if (weapon === 'shotgun') burst(0.22, 700, 0.5);
+      else if (weapon === 'rifle') burst(0.16, 1200, 0.42);
+      else if (weapon === 'smg') burst(0.07, 2100, 0.26);
+      else if (weapon === 'fists') burst(0.08, 400, 0.2);
+      else burst(0.12, 1800, 0.35);
     },
     pickup() {
       tone(660, 0.1, 'sine', 0.25);
@@ -261,22 +253,35 @@ export function createAudio() {
       tone(880, 0.09, 'sine', 0.22);
       window.setTimeout(() => tone(1318, 0.16, 'sine', 0.22), 80);
     },
-    /** A traffic horn: two square tones a fourth apart, short and annoyed. */
     honk() {
       tone(370, 0.17, 'square', 0.055);
       tone(466, 0.17, 'square', 0.045);
     },
-    /** The fail sting: everything slides down, and something thuds. */
     fail() {
       tone(220, 0.45, 'sawtooth', 0.16, 110);
       window.setTimeout(() => tone(165, 0.4, 'sawtooth', 0.13, 82), 130);
       burst(0.3, 240, 0.2);
     },
-    /** The success sting: a bright major arpeggio, up and paid. */
     missionComplete() {
       [523, 659, 784, 1047].forEach((freq, i) => {
         window.setTimeout(() => tone(freq, 0.22, 'triangle', 0.28), i * 110);
       });
+    },
+    /** The till at Aurora Arms / Torque & Tone. */
+    purchase() {
+      tone(988, 0.09, 'square', 0.16);
+      window.setTimeout(() => tone(1319, 0.16, 'square', 0.16), 80);
+    },
+    /** Respect level-up: a rising fifth that says the street knows your name. */
+    levelUp() {
+      [392, 587, 784].forEach((freq, i) => {
+        window.setTimeout(() => tone(freq, 0.24, 'triangle', 0.26), i * 100);
+      });
+    },
+    /** Nitro ignition: a whoosh up. */
+    nitro() {
+      burst(0.4, 900, 0.3);
+      tone(180, 0.4, 'sawtooth', 0.10, 520);
     },
     crash() {
       burst(0.25, 300, 0.4);

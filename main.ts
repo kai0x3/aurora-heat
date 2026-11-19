@@ -1,9 +1,9 @@
-// Aurora Heat — the entry program (Node 22, standard library only). The game is
-// this directory's game/ folder: plain static files a desktop browser loads
-// offline (game/index.html and its ES modules, no library, no network request).
-// This program hands the entry in: it copies game/ and screenshots/ from beside
-// this file to /output and writes /output/dossier.json, the summary the judge
-// reads, with the vendored make.fun library.
+// Aurora Heat v4 — the entry program (Node 22, standard library only). The
+// game is this directory's game/ folder: plain static files a desktop browser
+// loads offline (game/index.html and its ES modules, no library, no network
+// request). This program hands the entry in: it copies game/ and screenshots/
+// from beside this file to /output and writes /output/dossier.json, the
+// summary the judge reads, with the vendored make.fun library.
 //
 // Serve the game locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

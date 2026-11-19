@@ -1,6 +1,8 @@
-// A small seeded random number generator (mulberry32) plus the few helpers the
-// city and traffic builders use. The same seed always builds the same Port Aurora,
-// which is what makes the screenshot scenes repeatable.
+// A small seeded random number generator (mulberry32) plus the helpers the
+// city, traffic and activity builders use. The same seed always builds the
+// same Port Aurora, which is what makes the screenshot scenes repeatable.
+// v4 rule, unchanged and absolute: gameplay randomness flows through this
+// generator only — never Math.random or the wall clock.
 
 export function createRng(seed) {
   let a = seed | 0;
